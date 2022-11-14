@@ -1,1 +1,7 @@
+astropy
+matplotlib
+numpy
+pandas
 pre-commit
+scipy
+tqdm
