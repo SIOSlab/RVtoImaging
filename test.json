@@ -1,0 +1,28 @@
+{
+  "scienceInstruments": [
+    {
+      "name": "imager"
+    }
+  ],
+  "starlightSuppressionSystems": [
+    {
+      "name": "coronagraph"
+    }
+  ],
+  "modules": {
+    "PlanetPopulation": "AlbedoByRadiusDulzPlavchan",
+    "StarCatalog": "EXOCAT1",
+    "OpticalSystem": "",
+    "ZodiacalLight": "",
+    "BackgroundSources": "",
+    "PlanetPhysicalModel": "",
+    "Observatory": "",
+    "TimeKeeping": " ",
+    "PostProcessing": " ",
+    "Completeness": "",
+    "TargetList": " ",
+    "SimulatedUniverse": "DulzPlavchanUniverse",
+    "SurveySimulation": " ",
+    "SurveyEnsemble": " "
+  }
+}

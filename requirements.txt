@@ -1,6 +1,8 @@
 astropy
+keplertools
 matplotlib
 numpy
+rebound
 pandas
 pre-commit
 scipy
