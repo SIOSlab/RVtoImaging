@@ -1,3 +1,5 @@
+from random import expovariate
+
 import astropy.units as u
 import numpy as np
 from astropy.time import Time
@@ -14,15 +16,15 @@ class PreObs:
             type (str):
                 'fixed' - The times are provided
                     requires:
-                        set_times (astropy Time Quantity array)
+                        set_times (astropy Time array)
                 'Poisson' - Times should be calculated with a Poisson process
                     requires:
-                        start_time (astropy Time quantity)
+                        start_time (astropy Time)
                             - First available time for observation
-                        end_time (astropy Time quantity)
+                        end_time (astropy Time)
                             - Last available time for observation
-                        rate (float)
-                            - Number of observations per month
+                        rate (astropy rate Quantity - e.g. time^(-1))
+                            - Rate of observations
                 'equal' - Give a start and end time and a number of
                             observations then distributes them equally
                     requires:
@@ -41,11 +43,27 @@ class PreObs:
             self.start_time = params["start_time"]
             self.end_time = params["end_time"]
             self.rate = params["rate"]
+            current_time = Time(self.start_time.jd, format="jd")
+            times_list = []
+            time_is_valid = True
+            while time_is_valid:
+                # Generate new times with expovariate function until the
+                # current time is greater than the final time
+                next_time = expovariate(self.rate)
+                current_time += next_time
+                if current_time >= self.end_time:
+                    time_is_valid = False
+                else:
+                    times_list.append(current_time.jd)
+            self.times = Time(times_list, format="jd")
         elif self.type == "equal":
             self.start_time = params["start_time"]
             self.end_time = params["end_time"]
             self.num = params["num"]
             self.times = np.linspace(self.start_time, self.end_time, self.num)
+
+        # Standardize formatting into decimalyear
+        self.times.format = "decimalyear"
 
     def poisson_times(self):
         total_time = self.end_time.decimalyear - self.start_time.decimalyear

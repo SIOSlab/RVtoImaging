@@ -16,7 +16,7 @@ def create_universe(universe_params):
         specs = json.loads(f.read())
     SU = get_module_from_specs(specs, "SimulatedUniverse")(**specs)
     # SU.__init__(SU, **specs)
-    universe = ExosimsUniverse(SU)
+    universe = ExosimsUniverse(SU, universe_params)
     return universe
 
 
@@ -25,7 +25,7 @@ class ExosimsUniverse(Universe):
     Class for the whole EXOSIMS universe
     """
 
-    def __init__(self, SU):
+    def __init__(self, SU, params):
         """
         Args:
             path (str or Path):
@@ -36,10 +36,13 @@ class ExosimsUniverse(Universe):
         #     if not cache_base.exists():
         #         cache_base.mkdir(parents=True)
         # self.path = path
-
         self.SU = SU
         # Load all systems
         sInds = SU.sInds
+        if "nsystems" in params.keys():
+            nsystems = params["nsystems"]
+            sInds = sInds[:nsystems]
+
         self.systems = []
         for sInd in tqdm(sInds, desc="Loading systems", position=0, leave=False):
             # if cache:

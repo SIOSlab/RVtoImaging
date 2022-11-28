@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from abc import ABC, abstractmethod
 
+from RVtools.preobs import PreObs
+
 
 class Builder(ABC):
     """
@@ -20,7 +22,7 @@ class Builder(ABC):
         pass
 
     @abstractmethod
-    def simulate_observations(self) -> None:
+    def simulate_rv_observations(self) -> None:
         pass
 
     @abstractmethod
@@ -60,21 +62,21 @@ class BaseBuilder(Builder):
     def universe_params(self, value):
         self._universe_params = value
 
-    @property
-    def preobs_type(self):
-        return self._preobs_type
+    # @property
+    # def preobs_type(self):
+    #     return self._preobs_type
 
-    @preobs_type.setter
-    def preobs_type(self, value):
-        self._preobs_type = value
+    # @preobs_type.setter
+    # def preobs_type(self, value):
+    #     self._preobs_type = value
 
-    @property
-    def preobs_params(self):
-        return self._preobs_params
+    # @property
+    # def preobs_params(self):
+    #     return self.preobs_params
 
-    @preobs_params.setter
-    def preobs_params(self, value):
-        self._preobs_params = value
+    # @preobs_params.setter
+    # def preobs_params(self, value):
+    #     self.preobs_params = value
 
     @property
     def precursor_data(self) -> RVData:
@@ -99,8 +101,8 @@ class BaseBuilder(Builder):
     def create_universe(self):
         self._rvdata.create_universe(self.universe_type, self.universe_params)
 
-    def simulate_observations(self):
-        self._rvdata.precursor_observations(self.preobs_type, self.preobs_params)
+    def simulate_rv_observations(self):
+        self._rvdata.precursor_observations(self.preobs_params)
 
     def orbit_fitting(self):
         self._rvdata.add("PartC1")
@@ -137,9 +139,9 @@ class RVData:
         universelib = importlib.import_module(f"RVtools.universes.{universe_type}")
         self._universe = universelib.create_universe(universe_params)
 
-    def precursor_observations(self, preobs_type, preobs_params):
-        universelib = importlib.import_module(f"RVtools.preobss.{preobs_type}")
-        self._universe = universelib.create_universe(preobs_params)
+    def precursor_observations(self, preobs_params):
+        # universelib = importlib.import_module(f"RVtools.preobss")
+        self.preobs = PreObs(preobs_params)
         breakpoint()
 
     def list_parts(self) -> None:
@@ -180,12 +182,12 @@ class Director:
 
     def build_orbit_fits(self) -> None:
         self.builder.create_universe()
-        self.builder.simulate_observations()
+        self.builder.simulate_rv_observations()
         self.builder.orbit_fitting()
 
     def build_full_info(self) -> None:
         self.builder.create_universe()
-        self.builder.simulate_observations()
+        self.builder.simulate_rv_observations()
         self.builder.orbit_fitting()
         self.builder.probability_of_detection()
 
@@ -216,5 +218,5 @@ if __name__ == "__main__":
     # Remember, the Builder pattern can be used without a Director class.
     print("Custom rvdata: ")
     builder.create_universe()
-    builder.simulate_observations()
+    builder.simulate_rv_observations()
     builder.precursor_data.list_parts()
