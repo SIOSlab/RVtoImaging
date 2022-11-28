@@ -13,6 +13,10 @@ if __name__ == "__main__":
     builder.universe_type = "exosims"
     builder.universe_params = {"script": "test.json"}
     director.build_universe()
+
+    # Set up precursor observation information
+    builder.preobs_type = "rebound"
+    builder.preobs_params = {""}
     # builder.precursor_data.list_parts()
 
     # print("\n")

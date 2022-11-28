@@ -1,4 +1,5 @@
 astropy
+EXOSIMS
 keplertools
 matplotlib
 numpy

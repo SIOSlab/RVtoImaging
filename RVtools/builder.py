@@ -53,6 +53,30 @@ class BaseBuilder(Builder):
         self._universe_type = value
 
     @property
+    def universe_params(self):
+        return self._universe_params
+
+    @universe_params.setter
+    def universe_params(self, value):
+        self._universe_params = value
+
+    @property
+    def preobs_type(self):
+        return self._preobs_type
+
+    @preobs_type.setter
+    def preobs_type(self, value):
+        self._preobs_type = value
+
+    @property
+    def preobs_params(self):
+        return self._preobs_params
+
+    @preobs_params.setter
+    def preobs_params(self, value):
+        self._preobs_params = value
+
+    @property
     def precursor_data(self) -> RVData:
         """
         Concrete Builders are supposed to provide their own methods for
@@ -76,7 +100,7 @@ class BaseBuilder(Builder):
         self._rvdata.create_universe(self.universe_type, self.universe_params)
 
     def simulate_observations(self):
-        self._rvdata.add("PartB1")
+        self._rvdata.precursor_observations(self.preobs_type, self.preobs_params)
 
     def orbit_fitting(self):
         self._rvdata.add("PartC1")
@@ -112,6 +136,10 @@ class RVData:
     def create_universe(self, universe_type, universe_params):
         universelib = importlib.import_module(f"RVtools.universes.{universe_type}")
         self._universe = universelib.create_universe(universe_params)
+
+    def precursor_observations(self, preobs_type, preobs_params):
+        universelib = importlib.import_module(f"RVtools.preobss.{preobs_type}")
+        self._universe = universelib.create_universe(preobs_params)
         breakpoint()
 
     def list_parts(self) -> None:
