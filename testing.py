@@ -19,11 +19,30 @@ if __name__ == "__main__":
 
     # Set up precursor observation information
     # builder.preobs_type = "KeplerSTM"
-    builder.preobs_params = {
-        "type": "Poisson",
+    eprv = {
+        "name": "EPRV",
+        "precision": 0.05 * u.m / u.s,
+        "rate": 2 / u.d,
+        "start_time": Time(0.5, format="decimalyear"),
+        "end_time": Time(1, format="decimalyear"),
+    }
+    prv = {
+        "name": "PRV",
+        "precision": 0.4 * u.m / u.s,
         "rate": 5 / u.d,
         "start_time": Time(0, format="decimalyear"),
-        "end_time": Time(1, format="decimalyear"),
+        "end_time": Time(0.75, format="decimalyear"),
+    }
+    base_params = {
+        "timing_format": "Poisson",
+        "observation_scheme": "time_cluster",
+        "cluster_length": 2 * u.d,
+        "cluster_choice": "random",
+    }
+    builder.preobs_params = {
+        "base_params": base_params,
+        "instruments": [eprv, prv],
+        "systems_to_observe": [0, 1, 2],
     }
     # builder.preobs_params = {
     #     "type": "equal",

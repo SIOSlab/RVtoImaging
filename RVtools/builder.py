@@ -140,8 +140,7 @@ class RVData:
         self._universe = universelib.create_universe(universe_params)
 
     def precursor_observations(self, preobs_params):
-        # universelib = importlib.import_module(f"RVtools.preobss")
-        self.preobs = PreObs(preobs_params)
+        self.preobs = PreObs(preobs_params, self.universe)
         breakpoint()
 
     def list_parts(self) -> None:
