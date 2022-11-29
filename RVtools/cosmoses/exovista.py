@@ -198,7 +198,7 @@ class ExovistaPlanet(Planet):
         ).decompose()
 
         # Mean angular motion
-        self.n = (np.sqrt(self.mu / self.a**3)).decompose()
+        self.n = (np.sqrt(self.mu / self.a**3)).decompose() * u.rad
 
         # Propagation table
         self.vectors = pd.DataFrame(

@@ -2,6 +2,7 @@ import astropy.constants as const
 import astropy.units as u
 import numpy as np
 import pandas as pd
+import rebound
 from astropy.time import Time
 from keplertools import fun as kt
 from tqdm import tqdm
@@ -66,6 +67,66 @@ class System:
         for planet in self.planets:
             planet.vectors.sort_values("t", inplace=True)
             planet.vectors.reset_index(drop=True, inplace=True)
+
+    def propagate(self, times):
+        self.rv_vals = np.zeros(len(times)) * u.m / u.s
+        for planet in self.planets:
+            M = planet.mean_anom(times)
+            E = kt.eccanom(M, planet.e)
+            nu = kt.trueanom(E, planet.e) * u.rad
+            planet.rv_times = times
+            planet.nu = nu
+            planet.rv_vals = -planet.K * (
+                np.cos(planet.w + nu) + planet.e * np.cos(planet.w)
+            )
+            self.rv_vals += planet.rv_vals
+        self.instantiate_rebound()
+        rebound_times = ((times.jd - planet.t0.jd) * u.d).to(u.s).value
+        self.propagate_system(rebound_times)
+
+    def instantiate_rebound(self):
+        # Set up rebound simulation
+        self.sim = rebound.Simulation()
+        self.sim.G = const.G.value
+        # self.sim.add(
+        #     m=self.star.mass.decompose().value,
+        #     x=self.star._x[0].decompose().value,
+        #     y=self.star._y[0].decompose().value,
+        #     z=self.star._z[0].decompose().value,
+        #     vx=self.star._vx[0].decompose().value,
+        #     vy=self.star._vy[0].decompose().value,
+        #     vz=self.star._vz[0].decompose().value,
+        # )
+        # for planet in self.planets:
+        #     self.sim.add(
+        #         m=planet.mass.decompose().value,
+        #         x=planet._x[0].decompose().value,
+        #         y=planet._y[0].decompose().value,
+        #         z=planet._z[0].decompose().value,
+        #         vx=planet._vx[0].decompose().value,
+        #         vy=planet._vy[0].decompose().value,
+        #         vz=planet._vz[0].decompose().value,
+        #     )
+        self.sim.add(
+            m=self.star.mass.decompose().value,
+            x=self.star._x.decompose().value,
+            y=self.star._y.decompose().value,
+            z=self.star._z.decompose().value,
+            vx=self.star._vx.decompose().value,
+            vy=self.star._vy.decompose().value,
+            vz=self.star._vz.decompose().value,
+        )
+        for planet in self.planets:
+            self.sim.add(
+                m=planet.mass.decompose().value,
+                x=planet._x.decompose().value,
+                y=planet._y.decompose().value,
+                z=planet._z.decompose().value,
+                vx=planet._vx.decompose().value,
+                vy=planet._vy.decompose().value,
+                vz=planet._vz.decompose().value,
+            )
+        self.sim.move_to_com()
 
     def simulate_rv_observations(self, times, error):
 
@@ -259,53 +320,20 @@ class Planet:
         if return_v:
             return v
 
-    def calc_vs(self, t, return_nu=False):
+    def mean_anom(self, times):
         """
-        Calculate the radial velocities
-
+        Calculate the mean anomaly at the given times
         Args:
-            t (astropy Time):
-                input time
-            return_nu (Bool):
-                Whether the true anomaly should be returned
+            times (astropy Time array):
+                Times to calculate mean anomaly
 
         Returns:
-            vs (Astropy quantity):
-                The radial velocity at time t
-            nu (astropy Quantity):
-                True anomaly
-        """
-        M = self.mean_anom(t)
-        E = kt.eccanom(M, self.e)
-        nu = kt.trueanom(E, self.e) * u.rad
-        vs = (
-            np.sqrt(
-                const.G / ((self.mass + self.star.mass) * self.a * (1 - self.e**2))
-            )
-            * self.mass
-            * np.sin(self.i)
-            * (np.cos(self.w + nu) + self.e * np.cos(self.w))
-        )
-        if return_nu:
-            return vs.decompose(), nu
-        else:
-            return vs.decompose()
-
-    def mean_anom(self, t):
-        """
-        Calculate the mean anomaly at a given time, assumes initial time is 0
-        Args:
-            t (Time):
-                Time to calculate mean anomaly
-
-        Returns:
-            M (astropy Quantity):
+            M (astropy Quantity array):
                 Planet's mean anomaly at t (radians)
         """
-        # t is a Time quantity
-        # n is in standard SI units so the times are converted to seconds
-        M1 = (self.n * t).decompose() * u.rad
-        M = ((M1 + self.M0).to(u.rad)) % (2 * np.pi * u.rad)
+        M = ((self.n * ((times.jd - self.t0.jd) * u.d)).decompose() + self.M0) % (
+            2 * np.pi * u.rad
+        )
         return M
 
     def classify_planet(self):

@@ -4,6 +4,8 @@ from pathlib import Path
 import astropy.constants as const
 import astropy.units as u
 import numpy as np
+import pandas as pd
+from astropy.time import Time
 from tqdm import tqdm
 
 from EXOSIMS.util.get_module import get_module_from_specs
@@ -170,17 +172,17 @@ class ExosimsStar(Star):
         # self.radius = obj_header["RSTAR"] * u.R_sun
 
         # Propagation table
-        # self.vectors = pd.DataFrame(
-        #     {
-        #         "t": [self._t[0].decompose().value],
-        #         "x": [self._x[0].decompose().value],
-        #         "y": [self._y[0].decompose().value],
-        #         "z": [self._z[0].decompose().value],
-        #         "vx": [self._vx[0].decompose().value],
-        #         "vy": [self._vy[0].decompose().value],
-        #         "vz": [self._vz[0].decompose().value],
-        #     }
-        # )
+        self.vectors = pd.DataFrame(
+            {
+                "t": [self._t.decompose().value],
+                "x": [self._x.decompose().value],
+                "y": [self._y.decompose().value],
+                "z": [self._z.decompose().value],
+                "vx": [self._vx.decompose().value],
+                "vy": [self._vy.decompose().value],
+                "vz": [self._vz.decompose().value],
+            }
+        )
 
 
 class ExosimsPlanet(Planet):
@@ -193,17 +195,17 @@ class ExosimsPlanet(Planet):
 
         # Time data
         self._t = 0 * u.yr
-        # self.t0 = Time(self._t[0].to(u.yr).value, format="decimalyear")
+        self.t0 = Time(0, format="decimalyear")
 
         # Position data
-        self._x = SU.r[pInd][0] * u.AU
-        self._y = SU.r[pInd][1] * u.AU
-        self._z = SU.r[pInd][2] * u.AU
+        self._x = SU.r[pInd][0]
+        self._y = SU.r[pInd][1]
+        self._z = SU.r[pInd][2]
 
         # Velocity data
-        self._vx = SU.v[pInd][0] * u.AU / u.yr
-        self._vy = SU.v[pInd][1] * u.AU / u.yr
-        self._vz = SU.v[pInd][2] * u.AU / u.yr
+        self._vx = SU.v[pInd][0]
+        self._vy = SU.v[pInd][1]
+        self._vz = SU.v[pInd][2]
 
         # Assign the planet's keplerian orbital elements
         self.a = SU.a[pInd]
@@ -257,19 +259,19 @@ class ExosimsPlanet(Planet):
         ).decompose()
 
         # Mean angular motion
-        self.n = (np.sqrt(self.mu / self.a**3)).decompose()
+        self.n = (np.sqrt(self.mu / self.a**3)).decompose() * u.rad
 
         # Propagation table
-        # self.vectors = pd.DataFrame(
-        #     {
-        #         "t": [self._t[0].decompose().value],
-        #         "x": [self._x[0].decompose().value],
-        #         "y": [self._y[0].decompose().value],
-        #         "z": [self._z[0].decompose().value],
-        #         "vx": [self._vx[0].decompose().value],
-        #         "vy": [self._vy[0].decompose().value],
-        #         "vz": [self._vz[0].decompose().value],
-        #     }
-        # )
+        self.vectors = pd.DataFrame(
+            {
+                "t": [self._t.decompose().value],
+                "x": [self._x.decompose().value],
+                "y": [self._y.decompose().value],
+                "z": [self._z.decompose().value],
+                "vx": [self._vx.decompose().value],
+                "vy": [self._vy.decompose().value],
+                "vz": [self._vz.decompose().value],
+            }
+        )
 
         self.star = star

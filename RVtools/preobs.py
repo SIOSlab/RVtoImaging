@@ -37,11 +37,51 @@ class PreObs:
             # Keep track of instruments
             self.instruments.append(instrument)
 
-        # Now we need to actually simulate the observations
-        systems_to_observe = params["systems_to_observe"]
+        # We assign observation times to the systems of interest
+        self.systems_to_observe = params["systems_to_observe"]
         for inst in self.instruments:
-            inst.assign_instrument_observations(systems_to_observe)
-        breakpoint()
+            inst.assign_instrument_observations(self.systems_to_observe)
+
+        # Calculate all the times the system will need to be propagated
+        self.get_propagation_times()
+
+        # Propagate systems to all necessary times
+        self.propagate_systems(universe)
+
+        # Now we have to actually make the observations
+        for inst in self.instruments:
+            inst.make_observations()
+            pass
+
+    def get_propagation_times(self):
+        """
+        This gets the times at which we need to propagate the systems to
+        simulate observations with all instruments. It stores them in
+        self.prop_times, a dictionary where the system id is the key to the
+        necessary propagation times.
+        """
+        self.prop_times = {}
+        for system_id in self.systems_to_observe:
+            system_observations = []
+            for inst in self.instruments:
+                # Get the times where an observation of the current system_id
+                # will be made with this instrument
+                inst_obs_inds = np.where(inst.observation_schedule == system_id)[0]
+                obs_times = inst.rv_times[inst_obs_inds]
+                system_observations.append(obs_times.jd)
+            self.prop_times[system_id] = Time(
+                np.sort(np.concatenate(system_observations)), format="jd"
+            )
+
+    def propagate_systems(self, universe):
+        """
+        This calls each system's propagation function with the relevant
+        propagation times.
+        """
+        for system_id in self.systems_to_observe:
+            system = universe.systems[system_id]
+            times = self.prop_times[system_id]
+            system.propagate(times)
 
 
 class Instrument:
@@ -90,6 +130,8 @@ class Instrument:
     """
 
     def __init__(self, inst_params):
+
+        self.name = inst_params["name"]
 
         # Observation time generation parameters
         self.timing_format = inst_params["timing_format"]
@@ -183,4 +225,7 @@ class Instrument:
                 observation_schedule.append(current_system_ind)
 
         # Save schedule instrument
-        self.observation_schedule = observation_schedule
+        self.observation_schedule = np.array(observation_schedule)
+
+    def make_observations(self, universe):
+        """ """
