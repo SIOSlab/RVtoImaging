@@ -9,7 +9,7 @@ from astropy.time import Time
 from tqdm import tqdm
 
 from EXOSIMS.util.get_module import get_module_from_specs
-from RVtools.universe import Planet, Star, System, Universe
+from RVtools.cosmos import Planet, Star, System, Universe
 
 
 def create_universe(universe_params):

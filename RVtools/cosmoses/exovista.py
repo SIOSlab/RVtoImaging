@@ -10,7 +10,7 @@ from astropy.io.fits import getdata, getheader
 from astropy.time import Time
 from tqdm import tqdm
 
-from RVtools.universe import Planet, Star, System, Universe
+from RVtools.cosmos import Planet, Star, System, Universe
 from RVtools.utils import get_data
 
 

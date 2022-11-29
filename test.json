@@ -15,7 +15,7 @@
     "OpticalSystem": "",
     "ZodiacalLight": "",
     "BackgroundSources": "",
-    "PlanetPhysicalModel": "",
+    "PlanetPhysicalModel": "ForecasterMod",
     "Observatory": "",
     "TimeKeeping": " ",
     "PostProcessing": " ",

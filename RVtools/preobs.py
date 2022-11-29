@@ -1,12 +1,18 @@
 from random import choice, expovariate
 
 import numpy as np
+import pandas as pd
 from astropy.time import Time
 
 
 class PreObs:
     """
     Base class for precursor observations.
+    Main attributes are
+    syst_obs_dict (dict):
+        Dictionary that holds all observations of a single stellar system in DataFrames
+    observations (Pandas DataFrame):
+        DataFrame with all observations
     """
 
     def __init__(self, params, universe):
@@ -42,7 +48,7 @@ class PreObs:
         for inst in self.instruments:
             inst.assign_instrument_observations(self.systems_to_observe)
 
-        # Calculate all the times the system will need to be propagated
+        # Calculate all the times the systems will need to be propagated
         self.get_propagation_times()
 
         # Propagate systems to all necessary times
@@ -50,8 +56,24 @@ class PreObs:
 
         # Now we have to actually make the observations
         for inst in self.instruments:
-            inst.make_observations()
-            pass
+            inst.make_observations(universe)
+
+        # Combine the observations into one dataframe
+        for i, inst in enumerate(self.instruments):
+            inst_observations = inst.observations
+            if i == 0:
+                observations = inst_observations
+            else:
+                observations = pd.concat(
+                    [observations, inst_observations], ignore_index=True
+                )
+
+        # orbit fitting software friendly system observation dataframes
+        self.syst_obs_dict = {}
+        for system_id in self.systems_to_observe:
+            self.syst_obs_dict[system_id] = observations.loc[
+                observations.system_id == system_id
+            ].reset_index(drop=True)
 
     def get_propagation_times(self):
         """
@@ -132,6 +154,7 @@ class Instrument:
     def __init__(self, inst_params):
 
         self.name = inst_params["name"]
+        self.precision = inst_params["precision"]
 
         # Observation time generation parameters
         self.timing_format = inst_params["timing_format"]
@@ -228,4 +251,58 @@ class Instrument:
         self.observation_schedule = np.array(observation_schedule)
 
     def make_observations(self, universe):
-        """ """
+        """
+        Simulate the process of making observations for an instrument.
+        """
+        observed_systems = np.unique(self.observation_schedule)
+        for system_id in observed_systems:
+            # Need to keep track of which instrument observations are on the
+            # current system, and which system rv_vals those observations
+            # correspond to
+
+            # Start by getting the times when this instrument is observing
+            # the current system
+            inst_obs_inds = np.where(self.observation_schedule == system_id)
+            rv_obs_times = self.rv_times[inst_obs_inds]
+
+            # Now get the system's true rv values at those observation times
+            system = universe.systems[system_id]
+            df = system.rv_df[system.rv_df.t.isin(rv_obs_times)]
+            true_rv_SI = df.rv
+
+            # Instrument's precision in matching units
+            inst_precision_SI = self.precision.decompose().value
+
+            # Get the velocity offsets assuming Gaussian noise
+            rv_offset = np.random.normal(scale=inst_precision_SI, size=len(true_rv_SI))
+            observed_rv = true_rv_SI + rv_offset
+
+            # Formatting to create DataFrame with all relevant values
+            t_jd = rv_obs_times.jd
+            t_decimalyear = rv_obs_times.decimalyear
+            precision_array = np.repeat(inst_precision_SI, len(rv_obs_times))
+            system_array = np.repeat(system_id, len(rv_obs_times))
+            inst_array = np.repeat(self.name, len(rv_obs_times))
+            columns = ["t", "vel", "errvel", "tel", "truevel", "t_year", "system_id"]
+            stacked_arrays = np.stack(
+                (
+                    t_jd,
+                    observed_rv,
+                    precision_array,
+                    inst_array,
+                    true_rv_SI,
+                    t_decimalyear,
+                    system_array,
+                ),
+                axis=-1,
+            )
+            obs_df = pd.DataFrame(stacked_arrays, columns=columns)
+            if hasattr(self, "observations"):
+                self.observations = pd.concat(
+                    [self.observations, obs_df], ignore_index=True
+                )
+            else:
+                self.observations = obs_df
+
+        # Sort the observations by time
+        self.observations = self.observations.sort_values(by="t").reset_index(drop=True)

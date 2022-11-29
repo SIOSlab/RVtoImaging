@@ -136,12 +136,11 @@ class RVData:
 
     # @universe.setter
     def create_universe(self, universe_type, universe_params):
-        universelib = importlib.import_module(f"RVtools.universes.{universe_type}")
+        universelib = importlib.import_module(f"RVtools.cosmoses.{universe_type}")
         self._universe = universelib.create_universe(universe_params)
 
     def precursor_observations(self, preobs_params):
         self.preobs = PreObs(preobs_params, self.universe)
-        breakpoint()
 
     def list_parts(self) -> None:
         print(f"RVData parts: {', '.join(self.parts)}", end="")

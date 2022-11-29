@@ -35,6 +35,42 @@ class System:
     def a(self):
         return [planet.a for planet in self.planets]
 
+    @property
+    def mass(self):
+        return [planet.mass for planet in self.planets]
+
+    def propagate(self, times):
+        """
+        Propagates system at all times given. Currently does not handle
+        """
+        self.rv_vals = np.zeros(len(times)) * u.m / u.s
+        for planet in self.planets:
+            M = planet.mean_anom(times)
+            E = kt.eccanom(M, planet.e)
+            nu = kt.trueanom(E, planet.e) * u.rad
+            planet.rv_times = times
+            planet.nu = nu
+            planet.rv_vals = -planet.K * (
+                np.cos(planet.w + nu) + planet.e * np.cos(planet.w)
+            )
+            self.rv_vals += planet.rv_vals
+
+        # Storing as dataframe too
+        rv_df = pd.DataFrame(
+            np.stack((times, self.rv_vals.value), axis=-1), columns=["t", "rv"]
+        )
+        # Keep track in case future propagation is necessary
+        if hasattr(self, "rv_df"):
+            # TODO Add the new rv values to rv_df and then sort
+            breakpoint()
+        else:
+            self.rv_df = rv_df
+
+        # Rebound stuff, not needed right now
+        # self.instantiate_rebound()
+        # rebound_times = ((times.jd - planet.t0.jd) * u.d).to(u.s).value
+        # self.propagate_system(rebound_times)
+
     def propagate_system(self, t):
         """
         Propage system with rebound
@@ -67,22 +103,6 @@ class System:
         for planet in self.planets:
             planet.vectors.sort_values("t", inplace=True)
             planet.vectors.reset_index(drop=True, inplace=True)
-
-    def propagate(self, times):
-        self.rv_vals = np.zeros(len(times)) * u.m / u.s
-        for planet in self.planets:
-            M = planet.mean_anom(times)
-            E = kt.eccanom(M, planet.e)
-            nu = kt.trueanom(E, planet.e) * u.rad
-            planet.rv_times = times
-            planet.nu = nu
-            planet.rv_vals = -planet.K * (
-                np.cos(planet.w + nu) + planet.e * np.cos(planet.w)
-            )
-            self.rv_vals += planet.rv_vals
-        self.instantiate_rebound()
-        rebound_times = ((times.jd - planet.t0.jd) * u.d).to(u.s).value
-        self.propagate_system(rebound_times)
 
     def instantiate_rebound(self):
         # Set up rebound simulation
