@@ -9,7 +9,7 @@ class PreObs:
     """
     Base class for precursor observations.
     Main attributes are
-    syst_obs_dict (dict):
+    syst_observations (dict):
         Dictionary that holds all observations of a single stellar system in DataFrames
     observations (Pandas DataFrame):
         DataFrame with all observations
@@ -17,6 +17,10 @@ class PreObs:
 
     def __init__(self, params, universe):
         """
+        params (dict):
+            Parameters used by the PreObs module
+        universe (Universe):
+            Universe object that observations will be taken on
         system_ids (list of int):
             The integer indices of the systems to observe
         """
@@ -67,11 +71,12 @@ class PreObs:
                 observations = pd.concat(
                     [observations, inst_observations], ignore_index=True
                 )
+        self.observations = observations
 
         # orbit fitting software friendly system observation dataframes
-        self.syst_obs_dict = {}
+        self.syst_observations = {}
         for system_id in self.systems_to_observe:
-            self.syst_obs_dict[system_id] = observations.loc[
+            self.syst_observations[system_id] = observations.loc[
                 observations.system_id == system_id
             ].reset_index(drop=True)
 
@@ -283,7 +288,15 @@ class Instrument:
             precision_array = np.repeat(inst_precision_SI, len(rv_obs_times))
             system_array = np.repeat(system_id, len(rv_obs_times))
             inst_array = np.repeat(self.name, len(rv_obs_times))
-            columns = ["t", "vel", "errvel", "tel", "truevel", "t_year", "system_id"]
+            columns = [
+                "time",
+                "mnvel",
+                "errvel",
+                "tel",
+                "truevel",
+                "t_year",
+                "system_id",
+            ]
             stacked_arrays = np.stack(
                 (
                     t_jd,
@@ -297,6 +310,20 @@ class Instrument:
                 axis=-1,
             )
             obs_df = pd.DataFrame(stacked_arrays, columns=columns)
+
+            # Simplify datatypes
+            dtypes = {
+                "time": np.float,
+                "mnvel": np.float,
+                "errvel": np.float,
+                "tel": str,
+                "truevel": np.float,
+                "t_year": np.float,
+                "system_id": int,
+            }
+            obs_df = obs_df.astype(dtypes)
+
+            # Concat or create observations DataFrame
             if hasattr(self, "observations"):
                 self.observations = pd.concat(
                     [self.observations, obs_df], ignore_index=True
@@ -305,4 +332,6 @@ class Instrument:
                 self.observations = obs_df
 
         # Sort the observations by time
-        self.observations = self.observations.sort_values(by="t").reset_index(drop=True)
+        self.observations = self.observations.sort_values(by="time").reset_index(
+            drop=True
+        )

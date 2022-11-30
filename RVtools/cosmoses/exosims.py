@@ -67,6 +67,8 @@ class ExosimsUniverse(Universe):
         self.ids = [system.star.id for system in self.systems]
         self.names = [system.star.name for system in self.systems]
 
+        Universe.__init__(self)
+
 
 class ExosimsSystem(System):
     """
@@ -134,7 +136,7 @@ class ExosimsStar(Star):
 
         # System identifiers
         self.id = sInd
-        self.name = TL.Name[sInd]
+        self.name = TL.Name[sInd].replace(" ", "_")
 
         # System midplane information
         # self.midplane_PA = (obj_header["PA"] * u.deg).to(u.rad)  # Position angle

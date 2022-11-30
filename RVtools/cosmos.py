@@ -1,3 +1,5 @@
+import random
+
 import astropy.constants as const
 import astropy.units as u
 import numpy as np
@@ -14,7 +16,10 @@ class Universe:
     """
 
     def __init__(self) -> None:
-        pass
+        self.generate_hash()
+
+    def generate_hash(self):
+        self.hash = f"{random.getrandbits(128):032x}"
 
 
 class System:

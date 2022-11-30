@@ -67,6 +67,8 @@ class ExovistaUniverse(Universe):
         self.ids = [system.star.id for system in self.systems]
         self.HIP_ids = [system.star.HIP_id for system in self.systems]
 
+        Universe.__init__(self)
+
 
 class ExovistaSystem(System):
     """

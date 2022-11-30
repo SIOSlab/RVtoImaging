@@ -3,54 +3,67 @@ from astropy.time import Time
 
 from RVtools.builder import BaseBuilder, Director
 
-# from RVtools.universes import exovista
-
 if __name__ == "__main__":
     director = Director()
     builder = BaseBuilder()
     director.builder = builder
 
-    print("Standard basic precursor_data: ")
+    ######################################################################
+    # Set up universe generation
+    ######################################################################
     # builder.universe_type = "exovista"
     # builder.universe_params = {"data_path": "./data/", "universe_number": 1}
     builder.universe_type = "exosims"
-    builder.universe_params = {"script": "test.json", "nsystems": 10}
+    builder.universe_params = {"script": "test.json", "nsystems": 20}
     director.build_universe()
 
+    ######################################################################
     # Set up precursor observation information
-    # builder.preobs_type = "KeplerSTM"
+    ######################################################################
+    # Create base instrument parameters
+    base_params = {
+        "timing_format": "Poisson",
+        "observation_scheme": "time_cluster",
+        "cluster_length": 30 * u.d,
+        "cluster_choice": "random",
+    }
+    # Create instrument specific parameters
     eprv = {
         "name": "EPRV",
         "precision": 0.05 * u.m / u.s,
-        "rate": 2 / u.d,
-        "start_time": Time(0.5, format="decimalyear"),
-        "end_time": Time(1, format="decimalyear"),
+        "rate": 0.25 / u.d,
+        "start_time": Time(5, format="decimalyear"),
+        "end_time": Time(10, format="decimalyear"),
     }
     prv = {
         "name": "PRV",
         "precision": 0.4 * u.m / u.s,
-        "rate": 5 / u.d,
+        "rate": 0.5 / u.d,
+        "start_time": Time(2.5, format="decimalyear"),
+        "end_time": Time(10, format="decimalyear"),
+    }
+
+    rv = {
+        "name": "RV",
+        "precision": 1.5 * u.m / u.s,
+        "rate": 1 / u.d,
         "start_time": Time(0, format="decimalyear"),
-        "end_time": Time(0.75, format="decimalyear"),
+        "end_time": Time(5, format="decimalyear"),
     }
-    base_params = {
-        "timing_format": "Poisson",
-        "observation_scheme": "time_cluster",
-        "cluster_length": 2 * u.d,
-        "cluster_choice": "random",
-    }
+
+    # Save parameters to the builder
     builder.preobs_params = {
         "base_params": base_params,
-        "instruments": [eprv, prv],
-        "systems_to_observe": [0, 1, 2],
+        "instruments": [eprv, prv, rv],
+        "systems_to_observe": [0, 1, 3, 5, 8, 10, 15],
     }
-    # builder.preobs_params = {
-    #     "type": "equal",
-    #     "num": 100,
-    #     "start_time": Time(0, format="decimalyear"),
-    #     "end_time": Time(1, format="decimalyear"),
-    # }
     builder.simulate_rv_observations()
+
+    ######################################################################
+    # Orbit fitting
+    ######################################################################
+    builder.orbit_fitting_params = {"fitting_method": "rvsearch", "max_planets": 3}
+    builder.orbit_fitting()
     # builder.precursor_data.list_parts()
 
     # print("\n")

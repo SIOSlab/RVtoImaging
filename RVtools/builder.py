@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 from abc import ABC, abstractmethod
 
+from RVtools.orbitfit import OrbitFit
 from RVtools.preobs import PreObs
 
 
@@ -105,7 +106,7 @@ class BaseBuilder(Builder):
         self._rvdata.precursor_observations(self.preobs_params)
 
     def orbit_fitting(self):
-        self._rvdata.add("PartC1")
+        self._rvdata.orbit_fitting(self.orbit_fitting_params)
 
     def probability_of_detection(self):
         self._rvdata.add("Dataframe of p_det")
@@ -141,6 +142,9 @@ class RVData:
 
     def precursor_observations(self, preobs_params):
         self.preobs = PreObs(preobs_params, self.universe)
+
+    def orbit_fitting(self, orbit_fitting_params):
+        self.preobs = OrbitFit(orbit_fitting_params, self.preobs, self.universe)
 
     def list_parts(self) -> None:
         print(f"RVData parts: {', '.join(self.parts)}", end="")
