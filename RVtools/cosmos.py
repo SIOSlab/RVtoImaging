@@ -1,5 +1,3 @@
-import random
-
 import astropy.constants as const
 import astropy.units as u
 import numpy as np
@@ -16,10 +14,7 @@ class Universe:
     """
 
     def __init__(self) -> None:
-        self.generate_hash()
-
-    def generate_hash(self):
-        self.hash = f"{random.getrandbits(128):032x}"
+        pass
 
 
 class System:
@@ -36,13 +31,12 @@ class System:
         self.planets = np.array(self.planets)[np.argsort(a_vals)].tolist()
         self.pInds = self.pInds[np.argsort(a_vals)]
 
-    @property
-    def a(self):
-        return [planet.a for planet in self.planets]
-
-    @property
-    def mass(self):
-        return [planet.mass for planet in self.planets]
+    def getpattr(self, attr):
+        # Return array of all planet's attribute value, e.g. all semi-major
+        # axis values
+        return [getattr(planet, attr).value for planet in self.planets] * getattr(
+            self.planets[0], attr
+        ).unit
 
     def propagate(self, times):
         """

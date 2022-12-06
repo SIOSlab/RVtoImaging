@@ -1,4 +1,5 @@
 import astropy.units as u
+import numpy as np
 from astropy.time import Time
 
 from RVtools.builder import BaseBuilder, Director
@@ -18,11 +19,12 @@ if __name__ == "__main__":
     # builder.universe_type = "exovista"
     # builder.universe_params = {"data_path": "./data/", "universe_number": 1}
     # builder.universe_type = "exosims"
+    nsystems = 500
     builder.cache_universe = True
     builder.universe_params = {
         "universe_type": "exosims",
         "script": "test.json",
-        "nsystems": 20,
+        "nsystems": nsystems,
     }
     director.build_universe()
     print(builder.rvdata.universe.cache_path)
@@ -67,31 +69,32 @@ if __name__ == "__main__":
     eprv = {
         "name": "EPRV",
         "precision": 0.02 * u.m / u.s,
-        "rate": 0.5 / u.d,
-        "start_time": Time(7.5, format="decimalyear"),
-        "end_time": Time(10, format="decimalyear"),
+        "rate": 5 / u.d,
+        "start_time": Time(15, format="decimalyear"),
+        "end_time": Time(21, format="decimalyear"),
     }
     prv = {
         "name": "PRV",
         "precision": 0.4 * u.m / u.s,
-        "rate": 0.5 / u.d,
-        "start_time": Time(2.5, format="decimalyear"),
-        "end_time": Time(7.5, format="decimalyear"),
+        "rate": 5 / u.d,
+        "start_time": Time(5, format="decimalyear"),
+        "end_time": Time(21, format="decimalyear"),
     }
 
     rv = {
         "name": "RV",
         "precision": 1.5 * u.m / u.s,
-        "rate": 0.33 / u.d,
+        "rate": 5 / u.d,
         "start_time": Time(0, format="decimalyear"),
-        "end_time": Time(5, format="decimalyear"),
+        "end_time": Time(15, format="decimalyear"),
     }
 
     # Save parameters to the builder
+    systems = np.arange(nsystems)
     builder.preobs_params = {
         "base_params": base_params,
         "instruments": [eprv, prv, rv],
-        "systems_to_observe": [0, 1, 3, 5, 8, 10, 15],
+        "systems_to_observe": systems.tolist(),
     }
     builder.cache_preobs = True
     builder.simulate_rv_observations()
@@ -99,19 +102,20 @@ if __name__ == "__main__":
     ######################################################################
     # Orbit fitting
     ######################################################################
-    builder.orbit_fitting_params = {
+    builder.orbitfit_params = {
         "fitting_method": "rvsearch",
-        "max_planets": 2,
-        "systems_to_fit": [8, 10, 15],
+        "max_planets": 1,
+        "systems_to_fit": [0, 1, 3, 5, 8, 10, 15],
         "dynamic_max": True,
-        "mcmc_timeout_mins": 0.01,
+        # "mcmc_timeout_mins": 1.5,
     }
+    builder.cache_orbitfit = True
     builder.orbit_fitting()
 
     ######################################################################
-    # Orbit construction
+    # Probability of detection
     ######################################################################
-    builder.construction
+    builder.construction_params = {"construction_method": "credible interval"}
 
     # builder.precursor_data.list_parts()
 

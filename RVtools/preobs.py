@@ -1,8 +1,9 @@
-from random import choice, expovariate
+from random import choice, expovariate, sample
 
 import numpy as np
 import pandas as pd
 from astropy.time import Time
+from tqdm import tqdm
 
 
 class PreObs:
@@ -179,6 +180,9 @@ class Instrument:
         if self.observation_scheme == "time_cluster":
             self.cluster_length = inst_params["cluster_length"]
             self.cluster_choice = inst_params["cluster_choice"]
+            self.targets_per_observation = 1
+        elif self.observation_scheme == "survey":
+            self.targets_per_observation = inst_params["targets_per_observation"]
 
     def generate_available_rv_times(self):
         """
@@ -220,6 +224,11 @@ class Instrument:
         This will assign each of the instrument's observation time to a specific
         star.
         """
+        # This array is holds the indices of the system(s) that will be
+        # observed at each available rv time
+        self.observation_schedule = np.zeros(
+            (len(self.rv_times), self.targets_per_observation), dtype=int
+        )
         if self.observation_scheme == "time_cluster":
             # Necessary parameters
             cluster_start_time = self.rv_times[0]
@@ -228,12 +237,8 @@ class Instrument:
             # Used when cycling
             n_systems = len(systems_to_observe)
 
-            # This list is the index of the system that will be observed at
-            # each available rv time
-            observation_schedule = []
-
             # Loop over all the available observation times
-            for observation in self.rv_times:
+            for i, observation in enumerate(self.rv_times):
                 # Time since the cluster started
                 elapsed_time = observation - cluster_start_time
 
@@ -250,24 +255,33 @@ class Instrument:
                     # Make the current time the start time of the next cluster
                     cluster_start_time = observation
 
-                observation_schedule.append(current_system_ind)
+                self.observation_schedule[i, 0] = current_system_ind
+        elif self.observation_scheme == "survey":
+            # Observe every star at each observation time
+            for i, observation in enumerate(self.rv_times):
+                # Choose the targets that will be observed at every observation time
+                systems = sample(systems_to_observe, self.targets_per_observation)
+                for j, system_id in enumerate(systems):
+                    self.observation_schedule[i, j] = system_id
 
-        # Save schedule instrument
-        self.observation_schedule = np.array(observation_schedule)
+        # # Save schedule instrument
+        # self.observation_schedule = observation_schedule
 
     def make_observations(self, universe):
         """
         Simulate the process of making observations for an instrument.
         """
         observed_systems = np.unique(self.observation_schedule)
-        for system_id in observed_systems:
+        for system_id in tqdm(
+            observed_systems, desc=f"Simulating RV observations for {self.name}"
+        ):
             # Need to keep track of which instrument observations are on the
             # current system, and which system rv_vals those observations
             # correspond to
 
             # Start by getting the times when this instrument is observing
             # the current system
-            inst_obs_inds = np.where(self.observation_schedule == system_id)
+            inst_obs_inds = np.where(self.observation_schedule == system_id)[0]
             rv_obs_times = self.rv_times[inst_obs_inds]
 
             # Now get the system's true rv values at those observation times

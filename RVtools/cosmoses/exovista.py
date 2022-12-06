@@ -282,6 +282,7 @@ class ExovistaStar(Star):
         self.angdiam = obj_header["ANGDIAM"]  # Angular diameter
         self.mass = obj_header["MASS"] * u.M_sun
         self.radius = obj_header["RSTAR"] * u.R_sun
+        self.mu = self.mass * const.G
 
         # Propagation table
         self.vectors = pd.DataFrame(

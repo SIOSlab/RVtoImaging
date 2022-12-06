@@ -44,6 +44,8 @@ class ExosimsUniverse(Universe):
         if "nsystems" in params.keys():
             nsystems = params["nsystems"]
             sInds = sInds[:nsystems]
+        if "cache_path" in params.keys():
+            self.cache_path = params["cache_path"]
 
         self.systems = []
         for sInd in tqdm(sInds, desc="Loading systems", position=0, leave=False):
@@ -171,6 +173,7 @@ class ExosimsStar(Star):
         # self.Teff = obj_header["TEFF"] * u.K  # Effective temperature
         # self.angdiam = obj_header["ANGDIAM"] * u.K  # Angular diameter
         self.mass = TL.MsTrue[sInd]
+        self.mu = self.mass * const.G
         # self.radius = obj_header["RSTAR"] * u.R_sun
 
         # Propagation table

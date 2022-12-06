@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 from abc import ABC, abstractmethod
+from pathlib import Path
+
+import dill
 
 from RVtools.orbitfit import OrbitFit
+from RVtools.pdet import PDet
 from RVtools.preobs import PreObs
 
 
@@ -45,23 +50,64 @@ class BaseBuilder(Builder):
         self.reset()
 
     def reset(self):
-        self._rvdata = RVData()
+        self.rvdata = RVData()
+        self.cache_universe = False
+        self.cache_preobs = False
+        self.cache_orbitfit = False
 
     @property
-    def universe_type(self):
-        return self._universe_type
+    def run_title(self):
+        return self._run_title
+        # self.run_title = f"{random.getrandbits(128):032x}"[:8]
 
-    @universe_type.setter
-    def universe_type(self, value):
-        self._universe_type = value
+    @run_title.setter
+    def run_title(self, run_title):
+        self._run_title = run_title
+        self.rvdata.run_title = run_title
+        # self._rvdata.run_title = run_title
 
     @property
-    def universe_params(self):
-        return self._universe_params
+    def cache_universe(self):
+        return self._cache_universe
 
-    @universe_params.setter
-    def universe_params(self, value):
-        self._universe_params = value
+    @cache_universe.setter
+    def cache_universe(self, val):
+        self._cache_universe = val
+        self.rvdata.cache_universe = val
+
+    @property
+    def cache_preobs(self):
+        return self._cache_preobs
+
+    @cache_preobs.setter
+    def cache_preobs(self, val):
+        self._cache_preobs = val
+        self.rvdata.cache_preobs = val
+
+    @property
+    def cache_orbitfit(self):
+        return self._cache_orbitfit
+
+    @cache_orbitfit.setter
+    def cache_orbitfit(self, val):
+        self._cache_orbitfit = val
+        self.rvdata.cache_orbitfit = val
+
+    # @property
+    # def universe_type(self):
+    #     return self._universe_type
+
+    # @universe_type.setter
+    # def universe_type(self, value):
+    #     self._universe_type = value
+
+    # @property
+    # def universe_params(self):
+    #     return self._universe_params
+
+    # @universe_params.setter
+    # def universe_params(self, value):
+    #     self._universe_params = value
 
     # @property
     # def preobs_type(self):
@@ -95,21 +141,21 @@ class BaseBuilder(Builder):
         and you can make your builders wait for an explicit reset call from the
         client code before disposing of the previous result.
         """
-        precursor_data = self._rvdata
+        precursor_data = self.rvdata
         self.reset()
         return precursor_data
 
     def create_universe(self):
-        self._rvdata.create_universe(self.universe_type, self.universe_params)
+        self.rvdata.create_universe(self.universe_params)
 
     def simulate_rv_observations(self):
-        self._rvdata.precursor_observations(self.preobs_params)
+        self.rvdata.precursor_observations(self.preobs_params)
 
     def orbit_fitting(self):
-        self._rvdata.orbit_fitting(self.orbit_fitting_params)
+        self.rvdata.orbit_fitting(self.orbitfit_params)
 
     def probability_of_detection(self):
-        self._rvdata.add("Dataframe of p_det")
+        self.rvdata.calc_pdet(self.pdet_params)
 
 
 class RVData:
@@ -129,22 +175,80 @@ class RVData:
     """
 
     def __init__(self):
-        self._universe = None
+        self.universe = None
+        self.basepath = Path(".cache/")
 
-    @property
-    def universe(self):
-        return self._universe
+    def create_universe(self, universe_params):
+        universe_type = universe_params["universe_type"]
+        if self.cache_universe:
+            assert hasattr(self, "run_title"), "run_title must exist"
 
-    # @universe.setter
-    def create_universe(self, universe_type, universe_params):
-        universelib = importlib.import_module(f"RVtools.cosmoses.{universe_type}")
-        self._universe = universelib.create_universe(universe_params)
+            # Create hash from the universe parameters
+            hashstr = ""
+            for key in universe_params.keys():
+                hashstr += f"{key}:{universe_params[key]}\n"
+            self.universe_hash = hashlib.sha1(hashstr.encode("UTF-8")).hexdigest()[:8]
+
+            self.universe_path = Path(
+                self.basepath, self.run_title, self.universe_hash, "universe.p"
+            )
+            self.run_dir = self.universe_path.parents[0]
+            universe_params["cache_path"] = self.universe_path
+            if self.universe_path.exists():
+                # Load it
+                with open(self.universe_path, "rb") as f:
+                    self.universe = dill.load(f)
+            else:
+                universelib = importlib.import_module(
+                    f"RVtools.cosmoses.{universe_type}"
+                )
+                self.universe = universelib.create_universe(universe_params)
+
+                # Make directory and cache it
+                self.run_dir.mkdir(parents=True, exist_ok=True)
+                with open(self.universe_path, "wb") as f:
+                    dill.dump(self.universe, f)
+        else:
+            universelib = importlib.import_module(f"RVtools.cosmoses.{universe_type}")
+            self.universe = universelib.create_universe(universe_params)
 
     def precursor_observations(self, preobs_params):
-        self.preobs = PreObs(preobs_params, self.universe)
+        if self.cache_preobs:
+            self.preobs_path = Path(self.run_dir, "preobs.p")
+            preobs_params["cache_path"] = self.preobs_path
+            if self.preobs_path.exists():
+                # Load it
+                with open(self.preobs_path, "rb") as f:
+                    self.preobs = dill.load(f)
+            else:
+                self.preobs = PreObs(preobs_params, self.universe)
 
-    def orbit_fitting(self, orbit_fitting_params):
-        self.preobs = OrbitFit(orbit_fitting_params, self.preobs, self.universe)
+                # Make directory and cache it
+                with open(self.preobs_path, "wb") as f:
+                    dill.dump(self.preobs, f)
+        else:
+            self.preobs = PreObs(preobs_params, self.universe)
+
+    def orbit_fitting(self, orbitfit_params):
+        if self.cache_orbitfit:
+            self.orbitfit_path = Path(self.run_dir, "orbitfit.p")
+            orbitfit_params["cache_path"] = self.orbitfit_path
+            if self.orbitfit_path.exists():
+                # Load it
+                with open(self.orbitfit_path, "rb") as f:
+                    self.orbitfit = dill.load(f)
+            else:
+                self.orbitfit = OrbitFit(orbitfit_params, self.preobs, self.universe)
+
+                # Make directory and cache it
+                self.orbitfit_path.parents[0].mkdir(parents=True, exist_ok=True)
+                with open(self.orbitfit_path, "wb") as f:
+                    dill.dump(self.orbitfit, f)
+        else:
+            self.orbitfit = OrbitFit(orbitfit_params, self.preobs, self.universe)
+
+    def calc_pdet(self, pdet_params):
+        self.pdet = PDet(pdet_params, self.orbitfit, self.preobs, self.universe)
 
     def list_parts(self) -> None:
         print(f"RVData parts: {', '.join(self.parts)}", end="")
