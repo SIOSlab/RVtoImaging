@@ -12,6 +12,7 @@ if __name__ == "__main__":
     # Caching
     # hash = f"{random.getrandbits(128):032x}"[:8]
     builder.run_title = "test"
+    builder.workers = 14
 
     ######################################################################
     # Set up universe generation
@@ -27,7 +28,6 @@ if __name__ == "__main__":
         "nsystems": nsystems,
     }
     director.build_universe()
-    print(builder.rvdata.universe.cache_path)
 
     ######################################################################
     # Set up precursor observation information
@@ -104,8 +104,8 @@ if __name__ == "__main__":
     ######################################################################
     builder.orbitfit_params = {
         "fitting_method": "rvsearch",
-        "max_planets": 1,
-        "systems_to_fit": [0, 1, 3, 5, 8, 10, 15],
+        "max_planets": 2,
+        "systems_to_fit": [0],
         "dynamic_max": True,
         # "mcmc_timeout_mins": 1.5,
     }

@@ -1,9 +1,11 @@
+import pickle
 from pathlib import Path
 
 import astropy.units as u
 import numpy as np
 
 from rvsearch import search
+from RVtools.logger import logger
 
 
 class OrbitFit:
@@ -11,14 +13,15 @@ class OrbitFit:
     Base class to do orbit fitting.
     """
 
-    def __init__(self, params, preobs, universe):
+    def __init__(self, params, preobs, universe, workers):
         self.method = params["fitting_method"]
         self.max_planets = params["max_planets"]
         self.systems_to_fit = params["systems_to_fit"]
         self.dynamic_max = params["dynamic_max"]
+        self.workers = workers
 
         self.paths = {}
-        self.fitting_result = {}
+        self.planets_fitted = {}
         if self.method == "rvsearch":
             self.use_rvsearch(preobs, universe)
 
@@ -27,7 +30,7 @@ class OrbitFit:
         This method takes in the precursor observation object and the universe
         object to run orbit fitting with the RVsearch tool.
         """
-        for system_id in self.systems_to_fit:
+        for i, system_id in enumerate(self.systems_to_fit):
             rv_df = preobs.syst_observations[system_id]
             system = universe.systems[system_id]
             star_name = system.star.name
@@ -45,16 +48,26 @@ class OrbitFit:
                 max_planets = min([feasible_max, self.max_planets])
             else:
                 max_planets = self.max_planets
+            logger.info(
+                (
+                    f"Searching {star_name} for up to {max_planets} planets."
+                    f"Star {i+1} of {len(self.systems_to_fit)}."
+                )
+            )
             searcher = search.Search(
                 rv_df,
                 starname=star_name,
-                workers=14,
+                workers=self.workers,
                 mcmc=True,
                 verbose=True,
                 max_planets=max_planets,
                 mstar=(system.star.mass.to(u.M_sun).value, 0),
-                # manual_grid=np.linspace(10, 10000, 3000)
             )
-            success = searcher.run_search(outdir=system_path)
+            searcher.run_search(outdir=system_path)
+            search_path = Path(system_path, "search.pkl")
+            with open(search_path, "rb") as f:
+                sch = pickle.load(f)
+            planets_fitted = sch.post.params.num_planets
+            logger.info(f"Found {planets_fitted} planets around {star_name}.")
             self.paths[system_id] = system_path
-            self.fitting_result[system_id] = success
+            self.planets_fitted[system_id] = planets_fitted

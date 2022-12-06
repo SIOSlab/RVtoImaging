@@ -38,6 +38,7 @@ class ExosimsUniverse(Universe):
         #     if not cache_base.exists():
         #         cache_base.mkdir(parents=True)
         # self.path = path
+        self.type = "EXOSIMS"
         self.SU = SU
         # Load all systems
         sInds = SU.sInds

@@ -5,6 +5,8 @@ import pandas as pd
 from astropy.time import Time
 from tqdm import tqdm
 
+from RVtools.logger import logger
+
 
 class PreObs:
     """
@@ -22,8 +24,6 @@ class PreObs:
             Parameters used by the PreObs module
         universe (Universe):
             Universe object that observations will be taken on
-        system_ids (list of int):
-            The integer indices of the systems to observe
         """
 
         if "base_params" in params:
@@ -43,20 +43,24 @@ class PreObs:
             instrument = Instrument(inst_params)
 
             # Create the times available for observation
+            logger.info(f"Generating rv times for {inst['name']}")
             instrument.generate_available_rv_times()
 
             # Keep track of instruments
             self.instruments.append(instrument)
 
+        logger.info("Assigning observations")
         # We assign observation times to the systems of interest
         self.systems_to_observe = params["systems_to_observe"]
         for inst in self.instruments:
             inst.assign_instrument_observations(self.systems_to_observe)
 
         # Calculate all the times the systems will need to be propagated
+        logger.info("Getting propagation times")
         self.get_propagation_times()
 
         # Propagate systems to all necessary times
+        logger.info("Propagating systems")
         self.propagate_systems(universe)
 
         # Now we have to actually make the observations
@@ -272,9 +276,8 @@ class Instrument:
         Simulate the process of making observations for an instrument.
         """
         observed_systems = np.unique(self.observation_schedule)
-        for system_id in tqdm(
-            observed_systems, desc=f"Simulating RV observations for {self.name}"
-        ):
+        logger.info(f"Simulating RV observations for {self.name}")
+        for system_id in tqdm(observed_systems):
             # Need to keep track of which instrument observations are on the
             # current system, and which system rv_vals those observations
             # correspond to

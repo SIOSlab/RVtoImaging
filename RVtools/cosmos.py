@@ -16,6 +16,11 @@ class Universe:
     def __init__(self) -> None:
         pass
 
+    def __repr__(self):
+        str = f"{self.type} universe\n"
+        str += f"{len(self.systems)} systems loaded"
+        return str
+
 
 class System:
     """
@@ -24,6 +29,13 @@ class System:
 
     def __init__(self) -> None:
         pass
+
+    def __repr__(self):
+        return (
+            f"{self.star.name}\tdist:{self.star.dist}\t"
+            f"Type:{self.star.spectral_type}\n\n"
+            f"Planets:\n{self.get_p_df()}"
+        )
 
     def cleanup(self):
         # Sort the planets in the system by semi-major axis
@@ -34,9 +46,24 @@ class System:
     def getpattr(self, attr):
         # Return array of all planet's attribute value, e.g. all semi-major
         # axis values
-        return [getattr(planet, attr).value for planet in self.planets] * getattr(
-            self.planets[0], attr
-        ).unit
+        if type(getattr(self.planets[0], attr)) == u.Quantity:
+            return [getattr(planet, attr).value for planet in self.planets] * getattr(
+                self.planets[0], attr
+            ).unit
+        else:
+            return [getattr(planet, attr) for planet in self.planets]
+
+    def get_p_df(self):
+        patts = ["K", "T", "a", "e", "i", "W", "w", "M0", "t0", "mass", "radius"]
+        p_df = pd.DataFrame()
+        for att in patts:
+            pattr = self.getpattr(att)
+            if type(pattr) == u.Quantity:
+                p_df[att] = pattr.value
+            else:
+                p_df[att] = pattr
+
+        return p_df
 
     def propagate(self, times):
         """

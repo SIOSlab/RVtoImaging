@@ -35,6 +35,7 @@ class ExovistaUniverse(Universe):
             path (str or Path):
                 Location of all the system files. Should be something like "data/1/"
         """
+        self.type = "ExoVista"
         if cache:
             cache_base = Path(".cache", path.split("/")[1])
             if not cache_base.exists():
