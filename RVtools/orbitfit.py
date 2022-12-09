@@ -1,4 +1,6 @@
 import pickle
+import time
+from datetime import datetime
 from pathlib import Path
 
 import astropy.units as u
@@ -30,6 +32,8 @@ class OrbitFit:
         This method takes in the precursor observation object and the universe
         object to run orbit fitting with the RVsearch tool.
         """
+        start_time = time.time()
+        fits_completed = 0
         for i, system_id in enumerate(self.systems_to_fit):
             rv_df = preobs.syst_observations[system_id]
             system = universe.systems[system_id]
@@ -90,10 +94,22 @@ class OrbitFit:
                     )
 
                 fit_dir = Path(system_path, f"{max_planets}_depth")
+                if fits_completed > 0:
+                    current_time = time.time()
+                    runs_left = len(self.systems_to_fit) - i
+                    elapsed_time = current_time - start_time
+                    rate = elapsed_time / fits_completed
+                    finish_time = datetime.fromtimestamp(
+                        current_time + rate * runs_left
+                    )
+                    finish_str = finish_time.strftime("%c")
+                else:
+                    finish_str = "TBD"
                 logger.info(
                     (
                         f"Searching {star_name} for up to {max_planets} planets."
-                        f" Star {i+1} of {len(self.systems_to_fit)}."
+                        f" Star {i+1} of {len(self.systems_to_fit)}. "
+                        f"Estimated finish for orbit fitting: {finish_str}"
                     )
                 )
 
@@ -118,9 +134,8 @@ class OrbitFit:
                     "observations": int(n_obs),
                     "observational_baseline": obs_baseline,
                 }
+                fits_completed += 1
 
                 # Save specs
                 library.update(fit_dir, fit_spec)
-                # with open(Path(fit_dir, "specs.json"), "w") as f:
-                #     json.dump(fit_specs, f)
                 logger.info(f"Found {planets_fitted} planets around {star_name}.")
