@@ -277,7 +277,7 @@ class Instrument:
         """
         observed_systems = np.unique(self.observation_schedule)
         logger.info(f"Simulating RV observations for {self.name}")
-        for system_id in tqdm(observed_systems):
+        for system_id in tqdm(observed_systems, desc="Observing stars"):
             # Need to keep track of which instrument observations are on the
             # current system, and which system rv_vals those observations
             # correspond to

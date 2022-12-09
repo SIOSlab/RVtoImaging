@@ -1,14 +1,6 @@
 {
-  "scienceInstruments": [
-    {
-      "name": "imager"
-    }
-  ],
-  "starlightSuppressionSystems": [
-    {
-      "name": "coronagraph"
-    }
-  ],
+  "seed": 0,
+  "commonSystemInclinations": true,
   "modules": {
     "PlanetPopulation": "AlbedoByRadiusDulzPlavchan",
     "StarCatalog": "EXOCAT1",

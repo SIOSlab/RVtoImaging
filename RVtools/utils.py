@@ -2,8 +2,10 @@ import subprocess
 from pathlib import Path
 
 import astropy.io.fits as fits
+import astropy.units as u
 import numpy as np
 import pandas as pd
+from keplertools import fun as kt
 from tqdm import tqdm
 
 
@@ -77,3 +79,45 @@ def check_data(file):
         # says exists, delete file
         file.unlink()
     return failure
+
+
+def mean_anom(obj, times):
+    """
+    Calculate the mean anomaly at the given times
+    Args:
+        times (astropy Time array):
+            Times to calculate mean anomaly
+
+    Returns:
+        M (astropy Quantity array):
+            Planet's mean anomaly at t (radians)
+    """
+    M = ((obj.n * ((times.jd - obj.t0.jd) * u.d)).decompose() + obj.M0) % (
+        2 * np.pi * u.rad
+    )
+    return M
+
+
+def calc_position_vectors(obj, times):
+    orbElem = (
+        obj.a.decompose().value,
+        obj.e,
+        obj.W.to(u.rad).value,
+        obj.inc.to(u.rad).value,
+        obj.w.to(u.rad).value,
+    )
+    x, y, z, vx, vy, vz = [], [], [], [], [], []
+    for t in times:
+        M = mean_anom(obj, t)
+        E = kt.eccanom(M.to(u.rad).value, obj.e)
+        mu = obj.mu.decompose().value
+        r, v = kt.orbElem2vec(E, mu, orbElem)
+        x.append(r[0])
+        y.append(r[1])
+        z.append(r[2])
+        vx.append(v[0])
+        vy.append(v[1])
+        vz.append(v[2])
+    r = {"x": x, "y": y, "z": z, "vx": vx, "vy": vy, "vz": vz, "t": times.jd}
+    full_vector = pd.DataFrame(r)
+    return full_vector

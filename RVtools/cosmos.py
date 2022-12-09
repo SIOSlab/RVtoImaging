@@ -54,7 +54,22 @@ class System:
             return [getattr(planet, attr) for planet in self.planets]
 
     def get_p_df(self):
-        patts = ["K", "T", "a", "e", "i", "W", "w", "M0", "t0", "mass", "radius"]
+        patts = [
+            "K",
+            "T",
+            "secosw",
+            "sesinw",
+            "T_c",
+            "a",
+            "e",
+            "inc",
+            "W",
+            "w",
+            "M0",
+            "t0",
+            "mass",
+            "radius",
+        ]
         p_df = pd.DataFrame()
         for att in patts:
             pattr = self.getpattr(att)
@@ -260,8 +275,14 @@ class Planet:
         """
         # This will find the radial and velocity vectors at an epoch
         M = self.mean_anom(t)
-        E = kt.eccanom(M.value, self.e)
-        a, e, Omega, inc, w = self.a.decompose(), self.e, self.W, self.i, self.w
+        E = kt.eccanom(M.to(u.rad).value, self.e)
+        a, e, Omega, inc, w = (
+            self.a.decompose(),
+            self.e,
+            self.W.to(u.rad).value,
+            self.inc.to(u.rad).value,
+            self.w.to(u.rad).value,
+        )
         if not np.isscalar(E):
             a = np.ones(len(E)) * a
             e = np.ones(len(E)) * e
@@ -302,6 +323,7 @@ class Planet:
                 r = np.matmul(A, np.diag(np.cos(E) - e)) + np.matmul(
                     B, np.diag(np.sin(E))
                 )
+            return r
 
         # Calculate velocity vectors
         if return_v:

@@ -8,6 +8,7 @@ import pandas as pd
 from astropy.time import Time
 from tqdm import tqdm
 
+import radvel.orbit as rvo
 from EXOSIMS.util.get_module import get_module_from_specs
 from RVtools.cosmos import Planet, Star, System, Universe
 
@@ -16,8 +17,14 @@ def create_universe(universe_params):
     script_path = Path(universe_params["script"])
     with open(script_path) as f:
         specs = json.loads(f.read())
-    SU = get_module_from_specs(specs, "SimulatedUniverse")(**specs)
-    # SU.__init__(SU, **specs)
+    assert "seed" in specs.keys(), (
+        "For reproducibility the seed should" " not be randomized by EXOSIMS."
+    )
+
+    # Need to use SurveySimulation if we want to have a random seed
+    SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
+    SU = SS.SimulatedUniverse
+    # SU = get_module_from_specs(specs, "SimulatedUniverse")(**specs)
     universe = ExosimsUniverse(SU, universe_params)
     return universe
 
@@ -46,7 +53,7 @@ class ExosimsUniverse(Universe):
             nsystems = params["nsystems"]
             sInds = sInds[:nsystems]
         if "cache_path" in params.keys():
-            self.cache_path = params["cache_path"]
+            self.cache_path = Path(params["cache_path"])
 
         self.systems = []
         for sInd in tqdm(sInds, desc="Loading systems", position=0, leave=False):
@@ -216,10 +223,12 @@ class ExosimsPlanet(Planet):
         # Assign the planet's keplerian orbital elements
         self.a = SU.a[pInd]
         self.e = SU.e[pInd]
-        self.i = SU.I[pInd]
+        self.inc = SU.I[pInd]
         self.W = SU.O[pInd]
         # self.w = (obj_header["ARGPERI"] * u.deg).to(u.rad)
         self.w = SU.w[pInd]
+        self.secosw = np.sin(self.e) * np.cos(self.w)
+        self.sesinw = np.sin(self.e) * np.sin(self.w)
 
         # Assign the planet's mass/radius information
         self.mass = SU.Mp[pInd]
@@ -248,19 +257,19 @@ class ExosimsPlanet(Planet):
         # Because we have the mean anomaly at an epoch we can calculate the
         # time of periastron as t0 - T_e where T_e is the time since periastron
         # passage
-        # T_e = (self.T * self.M0 / (2 * np.pi * u.rad)).decompose()
-        # self.T_p = self.t0 - T_e
+        T_e = (self.T * self.M0 / (2 * np.pi * u.rad)).decompose()
+        self.T_p = self.t0 - T_e
 
         # Calculate the time of conjunction
-        # self.T_c = Time(
-        #     rvo.timeperi_to_timetrans(
-        #         self.T_p.jd, self.T.value, self.e, self.w_s.value
-        #     ),
-        #     format="jd",
-        # )
+        self.T_c = Time(
+            rvo.timeperi_to_timetrans(
+                self.T_p.jd, self.T.value, self.e, self.w_s.value
+            ),
+            format="jd",
+        )
         self.K = (
             (2 * np.pi * const.G / self.T) ** (1 / 3.0)
-            * (self.mass * np.sin(self.i) / star.mass ** (2 / 3.0))
+            * (self.mass * np.sin(self.inc) / star.mass ** (2 / 3.0))
             * (1 - self.e**2) ** (-1 / 2)
         ).decompose()
 

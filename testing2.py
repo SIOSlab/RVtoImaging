@@ -6,22 +6,15 @@ from RVtools.builder import BaseBuilder, Director
 
 if __name__ == "__main__":
     director = Director()
-    builder = BaseBuilder()
+    builder = BaseBuilder(cache_dir=".cache", workers=14)
     director.builder = builder
-
-    # Caching
-    # hash = f"{random.getrandbits(128):032x}"[:8]
-    builder.run_title = "test"
-    builder.workers = 14
 
     ######################################################################
     # Set up universe generation
     ######################################################################
     # builder.universe_type = "exovista"
     # builder.universe_params = {"data_path": "./data/", "universe_number": 1}
-    # builder.universe_type = "exosims"
     nsystems = 500
-    builder.cache_universe = True
     builder.universe_params = {
         "universe_type": "exosims",
         "script": "test.json",
@@ -35,56 +28,32 @@ if __name__ == "__main__":
     # Create base instrument parameters
     base_params = {
         "timing_format": "Poisson",
-        # "observation_scheme": "time_cluster",
         "observation_scheme": "survey",
         "targets_per_observation": 5,
         "cluster_length": 30 * u.d,
         "cluster_choice": "random",
     }
-    # Create instrument specific parameters
-    # eprv = {
-    #     "name": "EPRV",
-    #     "precision": 0.05 * u.m / u.s,
-    #     "rate": 0.25 / u.d,
-    #     "start_time": Time(5, format="decimalyear"),
-    #     "end_time": Time(10, format="decimalyear"),
-    # }
-    # prv = {
-    #     "name": "PRV",
-    #     "precision": 0.4 * u.m / u.s,
-    #     "rate": 0.5 / u.d,
-    #     "start_time": Time(2.5, format="decimalyear"),
-    #     "end_time": Time(10, format="decimalyear"),
-    # }
-
-    # rv = {
-    #     "name": "RV",
-    #     "precision": 1.5 * u.m / u.s,
-    #     "rate": 1 / u.d,
-    #     "start_time": Time(0, format="decimalyear"),
-    #     "end_time": Time(5, format="decimalyear"),
-    # }
 
     # Create instrument specific parameters
     eprv = {
         "name": "EPRV",
         "precision": 0.02 * u.m / u.s,
-        "rate": 5 / u.d,
+        "rate": 2 / u.d,
         "start_time": Time(15, format="decimalyear"),
-        "end_time": Time(21, format="decimalyear"),
+        "end_time": Time(20, format="decimalyear"),
     }
     prv = {
         "name": "PRV",
         "precision": 0.4 * u.m / u.s,
-        "rate": 5 / u.d,
+        "rate": 2 / u.d,
         "start_time": Time(5, format="decimalyear"),
-        "end_time": Time(21, format="decimalyear"),
+        "end_time": Time(20, format="decimalyear"),
     }
 
     rv = {
         "name": "RV",
         "precision": 1.5 * u.m / u.s,
-        "rate": 5 / u.d,
+        "rate": 4 / u.d,
         "start_time": Time(0, format="decimalyear"),
         "end_time": Time(15, format="decimalyear"),
     }
@@ -96,7 +65,6 @@ if __name__ == "__main__":
         "instruments": [eprv, prv, rv],
         "systems_to_observe": systems.tolist(),
     }
-    builder.cache_preobs = True
     builder.simulate_rv_observations()
 
     ######################################################################
@@ -105,17 +73,25 @@ if __name__ == "__main__":
     builder.orbitfit_params = {
         "fitting_method": "rvsearch",
         "max_planets": 2,
-        "systems_to_fit": [0],
-        "dynamic_max": True,
-        # "mcmc_timeout_mins": 1.5,
+        "systems_to_fit": np.arange(0, 100, 1).tolist(),
+        # "systems_to_fit": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
     }
-    builder.cache_orbitfit = True
     builder.orbit_fitting()
 
     ######################################################################
     # Probability of detection
     ######################################################################
-    builder.construction_params = {"construction_method": "credible interval"}
+    builder.pdet_params = {
+        "construction_method": "multivariate gaussian",
+        "number_of_orbits": 1000,
+        "systems_of_interest": [0],
+        "start_time": Time(20, format="decimalyear"),
+        "end_time": Time(40, format="decimalyear"),
+        "cov_samples": 1000,
+    }
+
+    builder.probability_of_detection()
+    breakpoint()
 
     # builder.precursor_data.list_parts()
 

@@ -152,7 +152,7 @@ class ExovistaPlanet(Planet):
         # Assign the planet's keplerian orbital elements
         self.a = obj_header["A"] * u.AU
         self.e = obj_header["E"]
-        self.i = (obj_header["I"] * u.deg).to(u.rad)
+        self.inc = (obj_header["I"] * u.deg).to(u.rad)
         self.W = (obj_header["LONGNODE"] * u.deg).to(u.rad)
         # self.w = (obj_header["ARGPERI"] * u.deg).to(u.rad)
         self.w = 0 * u.rad
@@ -196,7 +196,7 @@ class ExovistaPlanet(Planet):
         # )
         self.K = (
             (2 * np.pi * const.G / self.T) ** (1 / 3.0)
-            * (self.mass * np.sin(self.i) / star.mass ** (2 / 3.0))
+            * (self.mass * np.sin(self.inc) / star.mass ** (2 / 3.0))
             * (1 - self.e**2) ** (-1 / 2)
         ).decompose()
 
