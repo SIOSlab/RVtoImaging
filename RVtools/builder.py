@@ -204,6 +204,7 @@ class RVData:
 
         # Sorting so that the order doesn't matter
         universe_spec.pop("nsystems")
+        universe_spec.pop("script")
         universe_spec = {key: universe_spec[key] for key in sorted(universe_spec)}
 
         # Create hash from the parameters
