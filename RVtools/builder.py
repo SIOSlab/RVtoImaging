@@ -203,6 +203,7 @@ class RVData:
             universe_spec.update(new_params)
 
         # Sorting so that the order doesn't matter
+        universe_spec.pop("nsystems")
         universe_spec = {key: universe_spec[key] for key in sorted(universe_spec)}
 
         # Create hash from the parameters
