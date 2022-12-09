@@ -270,13 +270,13 @@ class RVData:
             str_params = {key: str_params[key] for key in sorted(str_params)}
             preobs_spec[inst["name"]] = str_params
 
-        syst_ids = preobs_params["systems_to_observe"]
-        system_names = []
-        for system_id in syst_ids:
-            # Get the system's name from the universe
-            system_names.append(self.universe.names[system_id])
+        # syst_ids = preobs_params["systems_to_observe"]
+        # system_names = []
+        # for system_id in syst_ids:
+        #     # Get the system's name from the universe
+        #     system_names.append(self.universe.names[system_id])
 
-        preobs_spec["stars"] = system_names
+        # preobs_spec["stars"] = system_names
         preobs_spec = {key: preobs_spec[key] for key in sorted(preobs_spec)}
         # Create hash from the parameters
         self.preobs_hash = hashlib.sha1(str(preobs_spec).encode("UTF-8")).hexdigest()[

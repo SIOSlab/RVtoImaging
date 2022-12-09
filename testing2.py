@@ -63,7 +63,8 @@ if __name__ == "__main__":
     builder.preobs_params = {
         "base_params": base_params,
         "instruments": [eprv, prv, rv],
-        "systems_to_observe": systems.tolist(),
+        "n_systems_to_observe": nsystems,
+        "filters": ["distance"],
     }
     builder.simulate_rv_observations()
 
@@ -72,8 +73,8 @@ if __name__ == "__main__":
     ######################################################################
     builder.orbitfit_params = {
         "fitting_method": "rvsearch",
-        "max_planets": 2,
-        "systems_to_fit": np.arange(101, 120, 1).tolist(),
+        "max_planets": 3,
+        "systems_to_fit": np.arange(101, 120, 1),
     }
     builder.orbit_fitting()
 

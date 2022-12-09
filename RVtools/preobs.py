@@ -31,6 +31,11 @@ class PreObs:
         else:
             base_params = {}
 
+        self.n_systems_to_observe = params["n_systems_to_observe"]
+        self.filters = params["filters"]
+
+        self.systems_to_observe = self.choose_systems(universe)
+
         insts = params["instruments"]
         self.instruments = []
         for inst in insts:
@@ -51,7 +56,7 @@ class PreObs:
 
         logger.info("Assigning observations")
         # We assign observation times to the systems of interest
-        self.systems_to_observe = params["systems_to_observe"]
+
         for inst in self.instruments:
             inst.assign_instrument_observations(self.systems_to_observe)
 
@@ -84,6 +89,19 @@ class PreObs:
             self.syst_observations[system_id] = observations.loc[
                 observations.system_id == system_id
             ].reset_index(drop=True)
+
+    def choose_systems(self, universe):
+        if "distance" in self.filters:
+            dists = np.array(
+                [
+                    (system.star.dist.value, i)
+                    for i, system in enumerate(universe.systems)
+                ]
+            )
+            sorted_dists = dists[dists[:, 0].argsort()]
+            sorted_ids = sorted_dists[: self.n_systems_to_observe, 1]
+            systems_to_observe = [int(syst_id) for syst_id in sorted_ids]
+        return systems_to_observe
 
     def get_propagation_times(self):
         """

@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import astropy.units as u
+import numpy as np
 from astropy.time import Time
 
 from rvsearch import search
@@ -18,10 +19,12 @@ class OrbitFit:
     def __init__(self, params, library, universe, preobs, workers):
         self.method = params["fitting_method"]
         self.max_planets = params["max_planets"]
-        self.systems_to_fit = params["systems_to_fit"]
         self.workers = workers
         self.cache_dir = Path(params["cache_dir"])
 
+        self.systems_to_fit = np.array(preobs.systems_to_observe)[
+            params["systems_to_fit"]
+        ]
         self.paths = {}
         self.planets_fitted = {}
         if self.method == "rvsearch":
