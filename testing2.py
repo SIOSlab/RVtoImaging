@@ -14,11 +14,10 @@ if __name__ == "__main__":
     ######################################################################
     # builder.universe_type = "exovista"
     # builder.universe_params = {"data_path": "./data/", "universe_number": 1}
-    nsystems = 500
     builder.universe_params = {
         "universe_type": "exosims",
         "script": "test.json",
-        "nsystems": nsystems,
+        # "nsystems": nsystems,
     }
     director.build_universe()
 
@@ -36,29 +35,30 @@ if __name__ == "__main__":
 
     # Create instrument specific parameters
     eprv = {
-        "name": "EPRV",
-        "precision": 0.02 * u.m / u.s,
+        "name": "3 cm/s",
+        "precision": 0.03 * u.m / u.s,
         "rate": 2 / u.d,
-        "start_time": Time(15, format="decimalyear"),
-        "end_time": Time(20, format="decimalyear"),
+        "start_time": Time(2032, format="decimalyear"),
+        "end_time": Time(2043, format="decimalyear"),
     }
     prv = {
-        "name": "PRV",
+        "name": "40 cm/s",
         "precision": 0.4 * u.m / u.s,
         "rate": 2 / u.d,
-        "start_time": Time(5, format="decimalyear"),
-        "end_time": Time(20, format="decimalyear"),
+        "start_time": Time(2022, format="decimalyear"),
+        "end_time": Time(2043, format="decimalyear"),
     }
 
     rv = {
-        "name": "RV",
-        "precision": 1.5 * u.m / u.s,
+        "name": "1 m/s",
+        "precision": 1 * u.m / u.s,
         "rate": 4 / u.d,
-        "start_time": Time(0, format="decimalyear"),
-        "end_time": Time(15, format="decimalyear"),
+        "start_time": Time(2015, format="decimalyear"),
+        "end_time": Time(2043, format="decimalyear"),
     }
 
     # Save parameters to the builder
+    nsystems = 1000
     systems = np.arange(nsystems)
     builder.preobs_params = {
         "base_params": base_params,
@@ -73,8 +73,7 @@ if __name__ == "__main__":
     builder.orbitfit_params = {
         "fitting_method": "rvsearch",
         "max_planets": 2,
-        "systems_to_fit": np.arange(0, 100, 1).tolist(),
-        # "systems_to_fit": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "systems_to_fit": np.arange(101, 120, 1).tolist(),
     }
     builder.orbit_fitting()
 
@@ -90,8 +89,7 @@ if __name__ == "__main__":
         "cov_samples": 1000,
     }
 
-    builder.probability_of_detection()
-    breakpoint()
+    # builder.probability_of_detection()
 
     # builder.precursor_data.list_parts()
 

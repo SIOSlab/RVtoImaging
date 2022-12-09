@@ -202,9 +202,11 @@ class RVData:
             new_params["release"] = importlib.metadata.version("EXOSIMS")
             universe_spec.update(new_params)
 
+        # Remove exosims script name if given, will probably be better as a
+        # list of keys
+        if "script" in universe_spec:
+            universe_spec.pop("script")
         # Sorting so that the order doesn't matter
-        universe_spec.pop("nsystems")
-        universe_spec.pop("script")
         universe_spec = {key: universe_spec[key] for key in sorted(universe_spec)}
 
         # Create hash from the parameters
