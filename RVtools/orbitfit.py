@@ -136,6 +136,7 @@ class OrbitFit:
                         "mcmc_converged": False,
                         "observations": int(n_obs),
                         "observational_baseline": obs_baseline,
+                        "mcmc_success": False,
                     }
                     logger.warning(f"Failure to run MCMC on {star_name}.")
                 else:
@@ -147,6 +148,7 @@ class OrbitFit:
                         "mcmc_converged": bool(searcher.mcmc_converged),
                         "observations": int(n_obs),
                         "observational_baseline": obs_baseline,
+                        "mcmc_success": True,
                     }
                     logger.info(f"Found {planets_fitted} planets around {star_name}.")
 
