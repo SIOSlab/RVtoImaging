@@ -118,9 +118,8 @@ class OrbitFit:
 
                 # Run search
                 searcher.run_search(outdir=str(fit_dir))
+                fits_completed += 1
 
-                # Save specifications of the orbit fit
-                planets_fitted = searcher.post.params.num_planets
                 n_obs = rv_df.shape[0]
                 obs_baseline = (
                     (
@@ -130,15 +129,26 @@ class OrbitFit:
                     .to(u.yr)
                     .value
                 )
-                fit_spec = {
-                    "max_planets": int(max_planets),
-                    "planets_fitted": int(planets_fitted),
-                    "mcmc_converged": bool(searcher.mcmc_converged),
-                    "observations": int(n_obs),
-                    "observational_baseline": obs_baseline,
-                }
-                fits_completed += 1
+                if searcher.mcmc_failure:
+                    fit_spec = {
+                        "max_planets": int(max_planets),
+                        "planets_fitted": 0,
+                        "mcmc_converged": False,
+                        "observations": int(n_obs),
+                        "observational_baseline": obs_baseline,
+                    }
+                    logger.warning(f"Failure to run MCMC on {star_name}.")
+                else:
+                    # Save specifications of the orbit fit
+                    planets_fitted = searcher.post.params.num_planets
+                    fit_spec = {
+                        "max_planets": int(max_planets),
+                        "planets_fitted": int(planets_fitted),
+                        "mcmc_converged": bool(searcher.mcmc_converged),
+                        "observations": int(n_obs),
+                        "observational_baseline": obs_baseline,
+                    }
+                    logger.info(f"Found {planets_fitted} planets around {star_name}.")
 
                 # Save specs
                 library.update(fit_dir, fit_spec)
-                logger.info(f"Found {planets_fitted} planets around {star_name}.")
