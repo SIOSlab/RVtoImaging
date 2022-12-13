@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     # Set up director and builder objects
     director = Director()
-    builder = BaseBuilder(cache_dir=".cache", workers=14)
+    builder = BaseBuilder(cache_dir=cache_dir, workers=workers)
     director.builder = builder
 
     ######################################################################
@@ -69,13 +69,13 @@ if __name__ == "__main__":
         "fit_order": 2,
         "instruments": [rv100_25, rv40_15, rv03_15],
     }
-    surveys = [survey2, survey3]
+    surveys = [survey3]
 
     # Save parameters to the builder
     base_params = {
         "observation_scheme": "survey",
-        "observations_per_night": 25,
-        "bad_weather_prob": 0.3,
+        "observations_per_night": 20,
+        "bad_weather_prob": 0.5,
         "end_time": mission_start,
     }
     nsystems = 125
@@ -95,6 +95,7 @@ if __name__ == "__main__":
         "max_planets": 3,
     }
 
+    # RUN THE SEEDS
     seeds = [int(seed) for seed in np.arange(first_seed, last_seed, 1)]
     director.run_seeds(seeds)
     ######################################################################
