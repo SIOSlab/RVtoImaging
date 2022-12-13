@@ -125,7 +125,6 @@ class OrbitFit:
                             verbose=True,
                             max_planets=max_planets,
                             mstar=(system.star.mass.to(u.M_sun).value, 0),
-                            running=False,
                         )
 
                     fit_dir = Path(survey_path, f"{max_planets}_depth")
@@ -149,7 +148,7 @@ class OrbitFit:
                     )
 
                     # Run search
-                    searcher.run_search(outdir=str(fit_dir))
+                    searcher.run_search(outdir=str(fit_dir), running=False)
                     fits_completed += 1
 
                     n_obs = rv_df.shape[0]
