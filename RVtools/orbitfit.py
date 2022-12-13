@@ -125,6 +125,7 @@ class OrbitFit:
                             verbose=True,
                             max_planets=max_planets,
                             mstar=(system.star.mass.to(u.M_sun).value, 0),
+                            running=False,
                         )
 
                     fit_dir = Path(survey_path, f"{max_planets}_depth")
