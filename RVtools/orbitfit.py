@@ -68,7 +68,7 @@ class OrbitFit:
                 has_fit, prev_max, fitting_done, _ = utils.check_orbitfit_dir(
                     survey_path
                 )
-                # best_candidate_fit = utils.prev_best_fit(system_path, survey.name)
+                best_candidate_fit = utils.prev_best_fit(system_path, survey.name)
 
                 # Path(system_path).mkdir(exist_ok=True)
 
@@ -98,24 +98,24 @@ class OrbitFit:
 
                             # Set new maximum planets
                             searcher.max_planets = max_planets
-                    # elif (best_candidate_fit["folder"] is not None) and (
-                    #     best_candidate_fit["max_planets"] > 1
-                    # ):
-                    #     # Second best scenario is if another fit has been done with
-                    #     # worse data that we can start with and then improve by using
-                    #     # better data
-                    #     logger.info(
-                    #         (
-                    #             f"Loading previous fit information on {star_name} "
-                    #             f"from {best_candidate_fit['search_path']}."
-                    #         )
-                    #     )
-                    #     searcher = self.change_post(
-                    #         survey,
-                    #         rv_df,
-                    #         max_planets,
-                    #         best_candidate_fit["search_path"],
-                    #     )
+                    elif (best_candidate_fit["folder"] is not None) and (
+                        best_candidate_fit["max_planets"] > 1
+                    ):
+                        # Second best scenario is if another fit has been done with
+                        # worse data that we can start with and then improve by using
+                        # better data
+                        logger.info(
+                            (
+                                f"Loading previous fit information on {star_name} "
+                                f"from {best_candidate_fit['search_path']}."
+                            )
+                        )
+                        searcher = self.change_post(
+                            survey,
+                            rv_df,
+                            max_planets,
+                            best_candidate_fit["search_path"],
+                        )
                     else:
                         searcher = search.Search(
                             rv_df,
