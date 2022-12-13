@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import astropy.units as u
 import numpy as np
 from astropy.time import Time
@@ -5,6 +8,16 @@ from astropy.time import Time
 from RVtools.builder import BaseBuilder, Director
 
 if __name__ == "__main__":
+    # Load settings for this machine
+    settings_file = Path("settings.json")
+    with open(settings_file, "r") as f:
+        settings = json.load(f)
+    cache_dir = settings["cache_dir"]
+    workers = settings["workers"]
+    first_seed = settings["first_seed"]
+    last_seed = settings["last_seed"]
+
+    # Set up director and builder objects
     director = Director()
     builder = BaseBuilder(cache_dir=".cache", workers=14)
     director.builder = builder
@@ -12,13 +25,10 @@ if __name__ == "__main__":
     ######################################################################
     # Set up universe generation
     ######################################################################
-    # builder.universe_type = "exovista"
-    # builder.universe_params = {"data_path": "./data/", "universe_number": 1}
     builder.universe_params = {
         "universe_type": "exosims",
         "script": "test.json",
     }
-    director.build_universe()
 
     ######################################################################
     # Set up precursor observation information
@@ -51,12 +61,6 @@ if __name__ == "__main__":
         "start_time": mission_start - 15 * u.yr,
     }
 
-    # Create surveys
-    # survey1 = {
-    #     "name": "100cm_25yr",
-    #     "priority": 0,
-    #     "instruments": [rv100_25],
-    # }
     survey2 = {
         "fit_order": 1,
         "instruments": [rv100_25, rv40_15, rv10_15],
@@ -65,27 +69,16 @@ if __name__ == "__main__":
         "fit_order": 2,
         "instruments": [rv100_25, rv40_15, rv03_15],
     }
-    # survey4 = {
-    #     "name": "100cm_25yr-03cm_15yr",
-    #     "priority": 3,
-    #     "instruments": [rv100_25, rv03_15],
-    # }
-    # survey5 = {
-    #     "name": "100cm_25yr-10cm_15yr",
-    #     "priority": 4,
-    #     "instruments": [rv100_25, rv10_15],
-    # }
-    # surveys = [survey2, survey3]
     surveys = [survey2, survey3]
+
     # Save parameters to the builder
     base_params = {
-        # "timing_format": "Poisson",
         "observation_scheme": "survey",
-        "observations_per_night": 20,
+        "observations_per_night": 25,
         "bad_weather_prob": 0.3,
         "end_time": mission_start,
     }
-    nsystems = 150
+    nsystems = 125
     systems = np.arange(nsystems)
     builder.preobs_params = {
         "base_params": base_params,
@@ -93,28 +86,28 @@ if __name__ == "__main__":
         "n_systems_to_observe": nsystems,
         "filters": ["distance"],
     }
-    builder.simulate_rv_observations()
 
     ######################################################################
     # Orbit fitting
     ######################################################################
     builder.orbitfit_params = {
         "fitting_method": "rvsearch",
-        "max_planets": 5,
+        "max_planets": 3,
     }
-    builder.orbit_fitting()
 
+    seeds = [int(seed) for seed in np.arange(first_seed, last_seed, 1)]
+    director.run_seeds(seeds)
     ######################################################################
     # Probability of detection
     ######################################################################
-    builder.pdet_params = {
-        "construction_method": "multivariate gaussian",
-        "cov_samples": 1000,
-        "number_of_orbits": 1000,
-        "systems_of_interest": [0],
-        "start_time": mission_start,
-        "end_time": mission_start + 10 * u.yr,
-    }
+    # builder.pdet_params = {
+    #     "construction_method": "multivariate gaussian",
+    #     "cov_samples": 1000,
+    #     "number_of_orbits": 1000,
+    #     "systems_of_interest": [0],
+    #     "start_time": mission_start,
+    #     "end_time": mission_start + 10 * u.yr,
+    # }
 
     # builder.probability_of_detection()
 

@@ -179,35 +179,77 @@ class RVData:
     def create_universe(self, universe_params):
         universe_type = universe_params["universe_type"]
         universe_spec = universe_params.copy()
-        # if self.cache_universe:
         # Create hash from universe parameters
         new_params = {}
         if "script" in universe_params.keys():
             # Add exosims parameters into the universe params
+            necessary_EXOSIMS_keys = [
+                "fixedPlanPerStar",
+                "Min",
+                "commonSystemInclinations",
+                "commonSystemInclinationParams",
+                "seed",
+                "missionStart",
+                "ntargs",
+                "fillPhotometry",
+                "filterBinaries",
+                "filter_for_char",
+                "earths_only",
+                "int_WA",
+                "int_dMag",
+                "scaleWAdMag",
+                "popStars",
+            ]
+            necessary_EXOSIMS_modules = [
+                "StarCatalog",
+                "PlanetPhysicalModel",
+                "PlanetPopulation",
+                "SimulatedUniverse",
+                "TargetList",
+            ]
             with open(Path(universe_params["script"])) as f:
                 exosims_script = json.loads(f.read())
+            if "forced_seed" in universe_params.keys():
+                # Make a copy of the exosims json and save it to the cache, then
+                # delete after
+                exosims_script["seed"] = universe_params["forced_seed"]
+                tmp_file = Path(
+                    self.cache_dir,
+                    (
+                        f"{universe_params['script'].split('.')[0]}"
+                        f"_seed_{exosims_script['seed']}.json"
+                    ),
+                )
+                with open(tmp_file, "w") as f:
+                    json.dump(exosims_script, f)
+                delete_tmp = True
+            else:
+                delete_tmp = False
             for key in exosims_script.keys():
                 value = exosims_script[key]
-                if type(value) is dict:
-                    for subkey in value.keys():
-                        if (value[subkey] == "") or (value[subkey] == " "):
-                            # Don't add unset parameters
-                            pass
-                        else:
-                            new_params[subkey] = value[subkey]
-                else:
-                    new_params[key] = exosims_script[key]
+                if key in necessary_EXOSIMS_keys or key == "modules":
+                    if type(value) is dict:
+                        for module in value.keys():
+                            if module in necessary_EXOSIMS_modules:
+                                if (value[module] == "") or (value[module] == " "):
+                                    # Don't add unset parameters
+                                    pass
+                                else:
+                                    new_params[module] = value[module]
+                    else:
+                        new_params[key] = exosims_script[key]
             # Add EXOSIMS version number
             new_params["release"] = importlib.metadata.version("EXOSIMS")
             universe_spec.update(new_params)
 
         # Remove exosims script name if given, will probably be better as a
         # list of keys
-        if "script" in universe_spec:
-            universe_spec.pop("script")
+        delete_keys = ["script", "forced_seed"]
+        for key in delete_keys:
+            if key in universe_spec.keys():
+                universe_spec.pop(key)
         # Sorting so that the order doesn't matter
         universe_spec = {key: universe_spec[key] for key in sorted(universe_spec)}
-
         # Create hash from the parameters
         self.universe_hash = hashlib.sha1(
             str(universe_spec).encode("UTF-8")
@@ -238,6 +280,8 @@ class RVData:
 
         # Add the star names to the specification dict
         universe_spec["stars"] = self.universe.names
+        if delete_tmp:
+            tmp_file.unlink()
 
         # Update library
         self.library.update(self.universe_dir, universe_spec)
@@ -362,58 +406,10 @@ class RVData:
         # self.library.update(self.preobs_dir, preobs_spec)
 
     def orbit_fitting(self, orbitfit_params):
-        # Get all the parameters
-        # orbitfit_spec = {}
-        # syst_ids = orbitfit_params["systems_to_fit"]
-        # system_names = []
-        # for system_id in syst_ids:
-        #     # Get the system's name from the universe
-        #     system_names.append(self.universe.names[system_id])
         orbitfit_params["universe_dir"] = self.universe_dir
         self.orbitfit = OrbitFit(
             orbitfit_params, self.library, self.universe, self.surveys, self.workers
         )
-        # Update library
-        # self.library.update(self.orbitfit_dir, orbitfit_spec)
-        # orbitfit_spec["stars"] = system_names
-        # for key in orbitfit_params.keys():
-        #     value = orbitfit_params[key]
-        #     if key == "systems_to_fit":
-        #         # This is already included with the system_names key
-        #         pass
-        #     else:
-        #         orbitfit_spec[key] = value
-
-        # Sort
-        # orbitfit_spec = {key: orbitfit_spec[key] for key in sorted(orbitfit_spec)}
-
-        # # Create hash from the parameters
-        # self.orbitfit_hash = hashlib.sha1(
-        #     str(orbitfit_spec).encode("UTF-8")
-        # ).hexdigest()[:8]
-
-        # self.orbitfit_dir = Path(self.preobs_dir, f"orbitfit_{self.orbitfit_hash}")
-        # self.orbitfit_dir.mkdir(exist_ok=True)
-        # self.orbitfit_path = Path(self.orbitfit_dir, "orbitfit.p")
-        # make directory if necessary
-        # orbitfit_params["cache_dir"] = str(self.orbitfit_dir)
-        # if self.orbitfit_path.exists():
-        #     # Load it
-        #     with open(self.orbitfit_path, "rb") as f:
-        #         self.orbitfit = dill.load(f)
-        #     logger.info(f"Loaded orbit fit object from {self.orbitfit_path}")
-        # else:
-        #     self.orbitfit = OrbitFit(
-        #         orbitfit_params, self.preobs, self.universe, self.workers
-        #     )
-
-        #     # Make directory and cache it
-        #     self.orbitfit_path.parents[0].mkdir(parents=True, exist_ok=True)
-        #     with open(self.orbitfit_path, "wb") as f:
-        #         dill.dump(self.orbitfit, f)
-        #     logger.info(
-        #         f"Created and then saved orbitfit object to {self.orbitfit_path}"
-        #     )
 
     def calc_pdet(self, pdet_params):
         self.pdet = PDet(pdet_params, self.orbitfit, self.universe, self.library)
@@ -458,6 +454,11 @@ class Director:
         self.builder.create_universe()
         self.builder.simulate_rv_observations()
         self.builder.orbit_fitting()
+
+    def run_seeds(self, seeds):
+        for seed in seeds:
+            self.builder.universe_params["forced_seed"] = int(seed)
+            self.build_orbit_fits()
 
     def build_full_info(self) -> None:
         self.builder.create_universe()
