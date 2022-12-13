@@ -1,5 +1,9 @@
-from random import choice, expovariate, sample
+import json
+from math import modf
+from pathlib import Path
+from random import choice, random, sample
 
+import astropy.units as u
 import numpy as np
 import pandas as pd
 from astropy.time import Time
@@ -31,6 +35,8 @@ class PreObs:
         else:
             base_params = {}
 
+        self.name = params["name"]
+        self.fit_order = params["fit_order"]
         self.n_systems_to_observe = params["n_systems_to_observe"]
         self.filters = params["filters"]
 
@@ -86,9 +92,51 @@ class PreObs:
         # orbit fitting software friendly system observation dataframes
         self.syst_observations = {}
         for system_id in self.systems_to_observe:
-            self.syst_observations[system_id] = observations.loc[
+            syst_obs = observations.loc[
                 observations.system_id == system_id
             ].reset_index(drop=True)
+            self.syst_observations[system_id] = syst_obs
+
+            # Save the observations for each system in their folder
+            syst_folder = Path(
+                params["universe_dir"], f"{universe.names[system_id]}", params["name"]
+            )
+            syst_folder.mkdir(exist_ok=True, parents=True)
+
+            # Save the specification for the observations in a json for easier
+            # parsing
+            obs_spec = {}
+            obs_spec["number_of_observations_all_instruments"] = syst_obs.shape[0]
+            # obs_spec["obs_baseline_all_instruments"] = (
+            #     syst_obs.iloc[np.argmax(syst_obs.t_year)].t_year
+            #     - syst_obs.iloc[np.argmin(syst_obs.t_year)].t_year
+            # )
+            inst_specs = {}
+            earliest_start = None
+            latest_end = None
+            for inst in self.instruments:
+                inst_spec = inst.spec
+                inst_spec["number_of_observations"] = syst_obs.loc[
+                    syst_obs.tel == inst.name
+                ].shape[0]
+                inst_specs[inst.name] = inst_spec
+
+                if earliest_start is None:
+                    earliest_start = inst_spec["start_time"]
+                    latest_end = inst_spec["end_time"]
+                if inst_spec["start_time"] < earliest_start:
+                    earliest_start = inst_spec["start_time"]
+                if inst_spec["end_time"] > latest_end:
+                    latest_end = inst_spec["end_time"]
+            obs_spec["obs_baseline"] = latest_end - earliest_start
+            obs_spec["instruments"] = inst_specs
+
+            # Save spec
+            with open(Path(syst_folder, "obs_spec.json"), "w") as f:
+                json.dump(obs_spec, f)
+
+            # Save raw data
+            syst_obs.to_csv(Path(syst_folder, "rv.csv"))
 
     def choose_systems(self, universe):
         if "distance" in self.filters:
@@ -184,18 +232,21 @@ class Instrument:
         self.name = inst_params["name"]
         self.precision = inst_params["precision"]
 
+        self.start_time = inst_params["start_time"]
+        self.end_time = inst_params["end_time"]
+
         # Observation time generation parameters
-        self.timing_format = inst_params["timing_format"]
-        if self.timing_format == "fixed":
-            self.rv_times = inst_params["set_times"]
-        elif self.timing_format == "Poisson":
-            self.start_time = inst_params["start_time"]
-            self.end_time = inst_params["end_time"]
-            self.rate = inst_params["rate"]
-        elif self.timing_format == "equal":
-            self.start_time = inst_params["start_time"]
-            self.end_time = inst_params["end_time"]
-            self.num = inst_params["num"]
+        # self.timing_format = inst_params["timing_format"]
+        # if self.timing_format == "fixed":
+        #     self.rv_times = inst_params["set_times"]
+        # elif self.timing_format == "Poisson":
+        #     self.start_time = inst_params["start_time"]
+        #     self.end_time = inst_params["end_time"]
+        #     self.rate = inst_params["rate"]
+        # elif self.timing_format == "equal":
+        #     self.start_time = inst_params["start_time"]
+        #     self.end_time = inst_params["end_time"]
+        #     self.num = inst_params["num"]
 
         # Observation assignment parameters
         self.observation_scheme = inst_params["observation_scheme"]
@@ -204,40 +255,78 @@ class Instrument:
             self.cluster_choice = inst_params["cluster_choice"]
             self.targets_per_observation = 1
         elif self.observation_scheme == "survey":
-            self.targets_per_observation = inst_params["targets_per_observation"]
+            self.observations_per_night = inst_params["observations_per_night"]
+            self.bad_weather_prob = inst_params["bad_weather_prob"]
+
+    @property
+    def spec(self):
+        return {
+            "precision": self.precision.decompose().value,
+            "start_time": self.start_time.decimalyear,
+            "end_time": self.end_time.decimalyear,
+            "observations_per_night": self.observations_per_night,
+            "bad_weather_prob": self.bad_weather_prob,
+        }
 
     def generate_available_rv_times(self):
         """
         Based on the timing format set up the rv times available for
         observation
         """
-        if self.timing_format == "fixed":
-            # If fixed then we already set it in init
-            pass
+        # if self.timing_format == "fixed":
+        #     # If fixed then we already set it in init
+        #     pass
 
-        elif self.timing_format == "Poisson":
-            current_time = Time(self.start_time.jd, format="jd")
-            times_list = []
-            time_is_valid = True
-            while time_is_valid:
-                # Generate spacing between observations with expovariate
-                # function to match a Poisson process
-                time_until_next_observation = expovariate(self.rate)
-                current_time += time_until_next_observation
+        # elif self.timing_format == "Poisson":
+        #     current_time = Time(self.start_time.jd, format="jd")
+        #     times_list = []
+        #     time_is_valid = True
+        #     while time_is_valid:
+        #         # Generate spacing between observations with expovariate
+        #         # function to match a Poisson process
+        #         time_until_next_observation = expovariate(self.rate)
+        #         current_time += time_until_next_observation
 
-                # Check if we've exceeded the maximum time allowed
-                if current_time >= self.end_time:
-                    time_is_valid = False
-                else:
-                    times_list.append(current_time.jd)
+        #         # Check if we've exceeded the maximum time allowed
+        #         if current_time >= self.end_time:
+        #             time_is_valid = False
+        #         else:
+        #             times_list.append(current_time.jd)
 
-            # Save to final format
-            self.rv_times = Time(times_list, format="jd")
+        #     # Save to final format
+        #     self.rv_times = Time(times_list, format="jd")
 
-        elif self.timing_format == "equal":
-            # Simple linear spacing
-            self.rv_times = np.linspace(self.start_time, self.end_time, self.num)
+        # elif self.timing_format == "equal":
+        #     # Simple linear spacing
+        #     self.rv_times = np.linspace(self.start_time, self.end_time, self.num)
 
+        nights_available = int(self.end_time.jd - self.start_time.jd)
+
+        # Generate random numbers to represent bad weather
+        # If the random number is less than the bad weather probability
+        # then it's considered a bad weather night and no observations
+        # will be taken
+        bad_weather_nights = (
+            np.array([random() for n in range(int(nights_available))])
+            < self.bad_weather_prob
+        )
+
+        # Set observations to start at 10 pm and finish at 4 am
+        offset_to_obs_start = 10 - 24 * (modf(self.start_time.jd)[0])
+        first_obs_time = self.start_time + (offset_to_obs_start) / 24 * u.d
+        # last_obs_of_night_time = first_obs_time + 6 * u.hr
+        obs_spacing = np.linspace(0, 6 / 24, self.observations_per_night)
+        self.obs_nights = []
+        times_arr = np.array([])
+        for night, bad_weather in zip(range(nights_available), bad_weather_nights):
+            if not bad_weather:
+                # Set up times for the night
+                self.obs_nights.append(night)
+                times_arr = np.append(
+                    times_arr, (first_obs_time + night + obs_spacing).jd
+                )
+
+        self.rv_times = Time(times_arr, format="jd")
         # Standardize formatting into decimalyear
         self.rv_times.format = "decimalyear"
 
@@ -248,9 +337,7 @@ class Instrument:
         """
         # This array is holds the indices of the system(s) that will be
         # observed at each available rv time
-        self.observation_schedule = np.zeros(
-            (len(self.rv_times), self.targets_per_observation), dtype=int
-        )
+        self.observation_schedule = np.zeros(len(self.rv_times), dtype=int)
         if self.observation_scheme == "time_cluster":
             # Necessary parameters
             cluster_start_time = self.rv_times[0]
@@ -279,12 +366,18 @@ class Instrument:
 
                 self.observation_schedule[i, 0] = current_system_ind
         elif self.observation_scheme == "survey":
-            # Observe every star at each observation time
-            for i, observation in enumerate(self.rv_times):
+            # Observe a random set of stars each night
+            for i, _ in enumerate(self.obs_nights):
                 # Choose the targets that will be observed at every observation time
-                systems = sample(systems_to_observe, self.targets_per_observation)
-                for j, system_id in enumerate(systems):
-                    self.observation_schedule[i, j] = system_id
+                systems = sample(systems_to_observe, self.observations_per_night)
+                self.observation_schedule[
+                    i
+                    * self.observations_per_night : self.observations_per_night
+                    * (1 + i)
+                ] = systems
+        # breakpoint()
+        # for system_id in systems:
+        #     self.observation_schedule[i] = system_id
 
         # # Save schedule instrument
         # self.observation_schedule = observation_schedule
@@ -308,6 +401,9 @@ class Instrument:
             # Now get the system's true rv values at those observation times
             system = universe.systems[system_id]
             df = system.rv_df[system.rv_df.t.isin(rv_obs_times)]
+            # Dropping extra values, can happen when multiple instruments
+            # observe this system
+            # df = df.drop_duplicates(subset=["t"], keep="first")
             true_rv_SI = df.rv
 
             # Instrument's precision in matching units

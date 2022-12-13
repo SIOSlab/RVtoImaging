@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -121,3 +122,137 @@ def calc_position_vectors(obj, times):
     r = {"x": x, "y": y, "z": z, "vx": vx, "vy": vy, "vz": vz, "t": times.jd}
     full_vector = pd.DataFrame(r)
     return full_vector
+
+
+def prev_best_fit(dir, survey_name):
+    """
+    Function looks at a directory of orbit fits
+
+    Args:
+        dir (Path):
+            The star's directory
+
+    Returns:
+        has_fit (bool):
+            Whether the star has a previous fit attempted
+        prev_max (int):
+            What 'max_planets' was set to during the best fit attempted on
+            the star
+        fitting_done (bool):
+            True when a search was conducted that returned less planets than
+            the allowed 'max_planets', indicating that all planets that can
+            be found were found.
+
+    """
+    dir_list = list(Path(dir).glob("*"))
+    # Get all survey specifications
+    other_specs = []
+    other_specs_dirs = []
+    for dir in dir_list:
+        spec_file = Path(dir, "obs_spec.json")
+        with open(spec_file, "r") as f:
+            obs_spec = json.load(f)
+        if survey_name in str(dir):
+            survey_spec = obs_spec
+        else:
+            other_specs.append(obs_spec)
+            other_specs_dirs.append(dir)
+
+    # Conditions to use a fit from a different set of observations
+    # Must have the same or fewer years of observations
+    # If it has the same best precision it has to have a
+    # shorter baseline for that instrument
+    survey_best_precision = 100
+    for inst_key in survey_spec["instruments"].keys():
+        inst = survey_spec["instruments"][inst_key]
+        if inst["precision"] < survey_best_precision:
+            survey_best_precision = inst["precision"]
+            survey_best_precision_baseline = inst["end_time"] - inst["start_time"]
+    best_candidate = {
+        "precision": 100,
+        "baseline": 0,
+        "folder": None,
+        "search_path": None,
+        "prev_max": 0,
+        "fitting_done": False,
+    }
+    for other_spec, other_spec_dir in zip(other_specs, other_specs_dirs):
+        condition_1 = other_spec["obs_baseline"] <= survey_spec["obs_baseline"]
+        best_inst_precision = 100
+        for inst_key in other_spec["instruments"].keys():
+            inst = other_spec["instruments"][inst_key]
+            if inst["precision"] < best_inst_precision:
+                best_inst_precision = inst["precision"]
+                best_inst_baseline = inst["end_time"] - inst["start_time"]
+        condition_2 = (
+            best_inst_precision >= survey_best_precision
+            and best_inst_baseline >= survey_best_precision_baseline
+        )
+        (
+            other_spec_has_fit,
+            other_spec_prev_max,
+            other_spec_fitting_done,
+            other_spec_search_file,
+        ) = check_orbitfit_dir(other_spec_dir)
+        if condition_1 and condition_2 and other_spec_has_fit:
+            if best_inst_precision == best_candidate["precision"]:
+                # Choose candidate with better baseline in sitations where
+                # they're the same
+                if best_inst_precision > best_candidate["baseline"]:
+                    pass
+            elif best_inst_precision < best_candidate["precision"]:
+                # Choose the current candidate
+                best_candidate["precision"] = best_inst_precision
+                best_candidate["baseline"] = best_inst_baseline
+                best_candidate["folder"] = other_spec_dir
+                best_candidate["search_path"] = other_spec_search_file
+                best_candidate["prev_max"] = other_spec_prev_max
+                best_candidate["fitting_done"] = other_spec_fitting_done
+
+        return best_candidate
+        # breakpoint()
+        # else:
+        #     # TODO FIX THIS WHEN I HAVE ACTUAL DATA
+        #     # has_fit = False
+        #     # prev_max = 0
+        #     # fitting_done = False
+        #     return None
+
+
+def check_orbitfit_dir(dir):
+    dir_list = list(Path(dir).glob("*"))
+    prev_run_dirs = [folder for folder in dir_list if folder.is_dir()]
+    search_exists = [Path(folder, "search.pkl").exists() for folder in prev_run_dirs]
+    # Must have the same or fewer max_planets
+    if sum(search_exists) == 0:
+        # No attempts at orbit fitting for this system
+        has_fit = False
+        prev_max = 0
+        fitting_done = False
+        search_file = None
+    else:
+        # Has a previous attempt to do orbit fitting
+        has_fit = True
+        prev_max = 0
+        highest_planets_fitted = 0
+        # search_file = Path(prev_run_dirs[0], "search.pkl")
+        for prev_run in prev_run_dirs:
+            with open(Path(prev_run, "spec.json"), "r") as f:
+                run_info = json.load(f)
+
+            # Get the information on that fit
+            run_max = run_info["max_planets"]
+            planets_fitted = run_info["planets_fitted"]
+
+            # If more planets were searched for than previous runs
+            if run_max > prev_max:
+                prev_max = run_max
+                highest_planets_fitted = planets_fitted
+                search_file = Path(prev_run, "search.pkl")
+
+        if highest_planets_fitted < prev_max:
+            fitting_done = True
+        else:
+            fitting_done = False
+
+    return has_fit, prev_max, fitting_done, search_file

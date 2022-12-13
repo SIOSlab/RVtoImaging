@@ -84,6 +84,9 @@ class System:
         """
         Propagates system at all times given. Currently does not handle
         """
+        # Get unique time values, multiple instruments can be scheduled to
+        # observe at the same time
+        times = Time(np.unique(times.jd), format="jd")
         self.rv_vals = np.zeros(len(times)) * u.m / u.s
         for planet in self.planets:
             M = planet.mean_anom(times)
@@ -101,11 +104,13 @@ class System:
             np.stack((times, self.rv_vals.value), axis=-1), columns=["t", "rv"]
         )
         # Keep track in case future propagation is necessary
-        if hasattr(self, "rv_df"):
-            # TODO Add the new rv values to rv_df and then sort
-            breakpoint()
-        else:
-            self.rv_df = rv_df
+        # if hasattr(self, "rv_df"):
+        #     # Add the new rv values to rv_df and then sort
+        #     self.rv_df = (
+        #         pd.concat([self.rv_df, rv_df]).drop_duplicates().sort_values(by="t")
+        #     )
+        # else:
+        self.rv_df = rv_df
 
         # Rebound stuff, not needed right now
         # self.instantiate_rebound()

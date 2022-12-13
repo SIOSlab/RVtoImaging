@@ -6,9 +6,8 @@ import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-import astropy
-import astropy.units as u
 import dill
+import numpy as np
 
 from RVtools.library import Library
 from RVtools.logger import logger
@@ -249,26 +248,25 @@ class RVData:
         ), "Precursor observations must have a set universe for caching"
 
         # Get all the specifications
-        base_params = preobs_params["base_params"]
-        insts = preobs_params["instruments"]
-        preobs_spec = {}
-        for inst in insts:
-            # Creating single dictionaries for each instrument that only have strings
-            # so that they play nicely with json formatting
-            str_params = {}
-            inst_params = base_params.copy()
-            inst_params.update(inst)
-            for key in inst_params.keys():
-                value = inst_params[key]
-                if type(value) == u.Quantity:
-                    str_params[key] = value.decompose().value
-                elif type(value) == astropy.time.Time:
-                    str_params[key] = value.decimalyear
-                else:
-                    str_params[key] = value
-            # Sort
-            str_params = {key: str_params[key] for key in sorted(str_params)}
-            preobs_spec[inst["name"]] = str_params
+        # surveys = preobs_params["surveys"]
+        # preobs_spec = {}
+        # for inst in insts:
+        #     # Creating single dictionaries for each instrument that only have strings
+        #     # so that they play nicely with json formatting
+        #     str_params = {}
+        #     inst_params = base_params.copy()
+        #     inst_params.update(inst)
+        #     for key in inst_params.keys():
+        #         value = inst_params[key]
+        #         if type(value) == u.Quantity:
+        #             str_params[key] = value.decompose().value
+        #         elif type(value) == astropy.time.Time:
+        #             str_params[key] = value.decimalyear
+        #         else:
+        #             str_params[key] = value
+        #     # Sort
+        #     str_params = {key: str_params[key] for key in sorted(str_params)}
+        #     preobs_spec[inst["name"]] = str_params
 
         # syst_ids = preobs_params["systems_to_observe"]
         # system_names = []
@@ -277,35 +275,91 @@ class RVData:
         #     system_names.append(self.universe.names[system_id])
 
         # preobs_spec["stars"] = system_names
-        preobs_spec = {key: preobs_spec[key] for key in sorted(preobs_spec)}
-        # Create hash from the parameters
-        self.preobs_hash = hashlib.sha1(str(preobs_spec).encode("UTF-8")).hexdigest()[
-            :8
-        ]
+        # preobs_spec = {key: preobs_spec[key] for key in sorted(preobs_spec)}
+        # # Create hash from the parameters
+        # self.preobs_hash = hashlib.sha1(str(preobs_spec).encode("UTF-8")).hexdigest()[
+        #     :8
+        # ]
 
         # Caching information
-        self.preobs_dir = Path(self.universe_dir, f"preobs_{self.preobs_hash}")
-        self.preobs_dir.mkdir(exist_ok=True)
-        self.preobs_path = Path(self.preobs_dir, "preobs.p")
+        # self.preobs_dir = Path(self.universe_dir, f"preobs_{self.preobs_hash}")
+        # self.preobs_dir.mkdir(exist_ok=True)
+        # self.preobs_path = Path(self.preobs_dir, "preobs.p")
 
-        # Load or create precursor observations
-        if self.preobs_path.exists():
-            # Load
-            with open(self.preobs_path, "rb") as f:
-                self.preobs = dill.load(f)
-            logger.info(f"Loaded precursor observations from {self.preobs_path}")
-        else:
-            # Create
-            self.preobs = PreObs(preobs_params, self.universe)
+        base_params = preobs_params["base_params"]
+        self.surveys = []
+        for survey in preobs_params["surveys"]:
+            # Create descriptive name for survey based on the input parameters
+            survey_params = preobs_params.copy()
+            survey_params.pop("surveys")
+            survey_params.update({"instruments": survey["instruments"]})
+            survey_params.update({"fit_order": survey["fit_order"]})
+            survey_name = ""
 
-            # Cache
-            with open(self.preobs_path, "wb") as f:
-                dill.dump(self.preobs, f)
+            # Sorting the instruments by their precisions to maintain consistency
+            inst_precisions = []
+            inst_baselines = []
+            for inst in survey["instruments"]:
+                inst_params = base_params.copy()
+                inst_params.update(inst)
+                inst_precisions.append(inst_params["precision"].decompose().value)
+                inst_baselines.append(
+                    round(
+                        (
+                            inst_params["end_time"].decimalyear
+                            - inst_params["start_time"].decimalyear
+                        )
+                    )
+                )
+            sorted_inds = np.flip(np.argsort(inst_precisions))
 
-            logger.info(f"Created precursor observations, saved to {self.preobs_path}")
+            # Create name to identify the survey in files
+            for ind in sorted_inds:
+                survey_name += f"{inst_precisions[ind]:.2f}m_{inst_baselines[ind]}-"
+            survey_name += f"{survey_params['n_systems_to_observe']}_systems-filter"
+            for filter in sorted(survey_params["filters"]):
+                survey_name += f"_{filter}"
+            survey_params["name"] = survey_name
+
+            # Create filename
+            survey_file = Path(self.universe_dir, "surveys", f"{survey_name}.p")
+            survey_params["universe_dir"] = self.universe_dir
+
+            # Caching information
+            if not survey_file.exists():
+                # Create precursor observations
+                survey = PreObs(survey_params, self.universe)
+
+                # Cache
+                Path(self.universe_dir, "surveys").mkdir(exist_ok=True)
+                with open(survey_file, "wb") as f:
+                    dill.dump(survey, f)
+                logger.info(f"Ran {survey_name} survey, saved to {survey_file}")
+            else:
+                # Load
+                with open(survey_file, "rb") as f:
+                    survey = dill.load(f)
+                logger.info(f"Loaded {survey_name} survey from {survey_file}")
+
+            self.surveys.append(survey)
+        # # Load or create precursor observations
+        # if self.preobs_path.exists():
+        #     # Load
+        #     with open(self.preobs_path, "rb") as f:
+        #         self.preobs = dill.load(f)
+        #     logger.info(f"Loaded precursor observations from {self.preobs_path}")
+        # else:
+        #     # Create
+        #     self.preobs = PreObs(preobs_params, self.universe)
+
+        #     # Cache
+        #     with open(self.preobs_path, "wb") as f:
+        #         dill.dump(self.preobs, f)
+
+        #     logger.info(f"Created precursor observations, saved to {self.preobs_path}")
 
         # Update library
-        self.library.update(self.preobs_dir, preobs_spec)
+        # self.library.update(self.preobs_dir, preobs_spec)
 
     def orbit_fitting(self, orbitfit_params):
         # Get all the parameters
@@ -315,9 +369,9 @@ class RVData:
         # for system_id in syst_ids:
         #     # Get the system's name from the universe
         #     system_names.append(self.universe.names[system_id])
-        orbitfit_params["cache_dir"] = self.preobs_dir
+        orbitfit_params["universe_dir"] = self.universe_dir
         self.orbitfit = OrbitFit(
-            orbitfit_params, self.library, self.universe, self.preobs, self.workers
+            orbitfit_params, self.library, self.universe, self.surveys, self.workers
         )
         # Update library
         # self.library.update(self.orbitfit_dir, orbitfit_spec)
