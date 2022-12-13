@@ -24,6 +24,7 @@ def create_universe(universe_params):
     # Need to use SurveySimulation if we want to have a random seed
     SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
     SU = SS.SimulatedUniverse
+    universe_params["missionStart"] = specs["missionStart"]
     # SU = get_module_from_specs(specs, "SimulatedUniverse")(**specs)
     universe = ExosimsUniverse(SU, universe_params)
     return universe
@@ -42,6 +43,7 @@ class ExosimsUniverse(Universe):
         """
         self.type = "EXOSIMS"
         self.SU = SU
+        self.t0 = Time(params["missionStart"], format="mjd")
         # Load all systems
         sInds = SU.sInds
         if "nsystems" in params.keys():
@@ -56,7 +58,7 @@ class ExosimsUniverse(Universe):
 
         self.systems = []
         for sInd in tqdm(sInds, desc="Loading systems", position=0, leave=False):
-            system = ExosimsSystem(SU, sInd)
+            system = ExosimsSystem(SU, sInd, self.t0)
             self.systems.append(system)
 
         # Get star ids
@@ -71,7 +73,7 @@ class ExosimsSystem(System):
     Class for the whole stellar system
     """
 
-    def __init__(self, SU, sInd):
+    def __init__(self, SU, sInd, t0):
 
         # Create star object
         self.star = ExosimsStar(SU, sInd)
@@ -79,7 +81,7 @@ class ExosimsSystem(System):
         self.pInds = np.where(SU.plan2star == sInd)[0]
         # loop over all planets
         for pInd in self.pInds:
-            self.planets.append(ExosimsPlanet(SU, self.star, pInd))
+            self.planets.append(ExosimsPlanet(SU, self.star, pInd, t0))
 
         self.cleanup()
         # Set up rebound simulation
@@ -190,11 +192,11 @@ class ExosimsPlanet(Planet):
     Assumes e=0, which is the case for all downloaded systems
     """
 
-    def __init__(self, SU, star, pInd):
+    def __init__(self, SU, star, pInd, t0):
 
         # Time data
-        self._t = 0 * u.yr
-        self.t0 = Time(0, format="decimalyear")
+        self._t = t0.decimalyear * u.yr
+        self.t0 = t0
 
         # Position data
         self._x = SU.r[pInd][0]
