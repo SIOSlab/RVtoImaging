@@ -223,6 +223,7 @@ class RVData:
                 with open(tmp_file, "w") as f:
                     json.dump(exosims_script, f)
                 delete_tmp = True
+                universe_params["script"] = str(tmp_file)
             else:
                 delete_tmp = False
             for key in exosims_script.keys():

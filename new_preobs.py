@@ -9,7 +9,7 @@ from RVtools.builder import BaseBuilder, Director
 
 if __name__ == "__main__":
     # Load settings for this machine
-    settings_file = Path("settings.json")
+    settings_file = Path(".config.json")
     with open(settings_file, "r") as f:
         settings = json.load(f)
     cache_dir = settings["cache_dir"]
