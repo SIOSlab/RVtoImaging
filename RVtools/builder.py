@@ -212,6 +212,7 @@ class RVData:
             if "forced_seed" in universe_params.keys():
                 # Make a copy of the exosims json and save it to the cache, then
                 # delete after
+                original_script = universe_params["script"]
                 exosims_script["seed"] = universe_params["forced_seed"]
                 tmp_file = Path(
                     self.cache_dir,
@@ -286,6 +287,9 @@ class RVData:
 
         # Update library
         self.library.update(self.universe_dir, universe_spec)
+
+        if "forced_seed" in universe_params.keys():
+            universe_params['script'] = original_script
 
     def precursor_observations(self, preobs_params):
         assert hasattr(
