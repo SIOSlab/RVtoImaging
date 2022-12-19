@@ -223,36 +223,38 @@ def check_orbitfit_dir(dir):
     dir_list = list(Path(dir).glob("*"))
     prev_run_dirs = [folder for folder in dir_list if folder.is_dir()]
     search_exists = [Path(folder, "search.pkl").exists() for folder in prev_run_dirs]
+    has_fit = False
+    search_file = None
     # Must have the same or fewer max_planets
     if sum(search_exists) == 0:
         # No attempts at orbit fitting for this system
-        has_fit = False
         prev_max = 0
         fitting_done = False
-        search_file = None
     else:
         # Has a previous attempt to do orbit fitting
-        has_fit = True
         prev_max = 0
         highest_planets_fitted = 0
         # search_file = Path(prev_run_dirs[0], "search.pkl")
         for prev_run in prev_run_dirs:
-            with open(Path(prev_run, "spec.json"), "r") as f:
-                run_info = json.load(f)
+            prev_run_spec = Path(prev_run, "spec.json")
+            if prev_run_spec.exists():
+                has_fit = True
+                with open(prev_run_spec, "r") as f:
+                    run_info = json.load(f)
 
-            # Get the information on that fit
-            run_max = run_info["max_planets"]
-            planets_fitted = run_info["planets_fitted"]
+                # Get the information on that fit
+                run_max = run_info["max_planets"]
+                planets_fitted = run_info["planets_fitted"]
 
-            # If more planets were searched for than previous runs
-            if run_max > prev_max:
-                prev_max = run_max
-                highest_planets_fitted = planets_fitted
-                search_file = Path(prev_run, "search.pkl")
+                # If more planets were searched for than previous runs
+                if run_max > prev_max:
+                    prev_max = run_max
+                    highest_planets_fitted = planets_fitted
+                    search_file = Path(prev_run, "search.pkl")
 
-        if highest_planets_fitted < prev_max:
-            fitting_done = True
-        else:
-            fitting_done = False
+            if highest_planets_fitted < prev_max:
+                fitting_done = True
+            else:
+                fitting_done = False
 
     return has_fit, prev_max, fitting_done, search_file
