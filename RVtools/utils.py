@@ -209,14 +209,7 @@ def prev_best_fit(dir, survey_name):
                 best_candidate["prev_max"] = other_spec_prev_max
                 best_candidate["fitting_done"] = other_spec_fitting_done
 
-        return best_candidate
-        # breakpoint()
-        # else:
-        #     # TODO FIX THIS WHEN I HAVE ACTUAL DATA
-        #     # has_fit = False
-        #     # prev_max = 0
-        #     # fitting_done = False
-        #     return None
+    return best_candidate
 
 
 def check_orbitfit_dir(dir):
