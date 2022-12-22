@@ -4,7 +4,6 @@ from pathlib import Path
 import astropy.constants as const
 import astropy.units as u
 import matplotlib as mpl
-import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -23,14 +22,13 @@ class PDet:
     Base class to do probability of detection calculations
     """
 
-    def __init__(self, params, orbitfit, universe, library):
+    def __init__(self, params, orbitfit, universe):
         self.method = params["construction_method"]
-        self.systems_of_interest = params["systems_of_interest"]
+        # self.systems_of_interest = params["systems_of_interest"]
         self.n_fits = params["number_of_orbits"]
         start_time = params["start_time"]
         end_time = params["end_time"]
         self.pdet_times = Time(np.arange(start_time.jd, end_time.jd, 25), format="jd")
-        self.cov_samples = params["cov_samples"]
 
         self.pops = {}
 
@@ -40,15 +38,9 @@ class PDet:
         # system_path = orbitfit.paths[system_id]
         # planets_fitted = orbitfit.planets_fitted[system_id]
         # Check for the chains
-        for system_id in self.systems_of_interest:
-            system_path = (
-                f"{orbitfit.cache_dir}/{universe.systems[system_id].star.name}"
-            )
-            _, prev_max, _ = library.check_orbitfit_dir(system_path)
-            fit_path = Path(system_path, f"{prev_max}_depth")
-            chains_path = Path(fit_path, "chains.csv.tar.bz2")
-            search_path = Path(fit_path, "search.pkl")
-            breakpoint()
+        for system_id, system_path in zip(orbitfit.systems_to_fit, orbitfit.paths):
+            chains_path = Path(system_path, "chains.csv.tar.bz2")
+            search_path = Path(system_path, "search.pkl")
             if chains_path.exists():
                 logger.info(
                     (
@@ -93,46 +85,70 @@ class PDet:
     def plot(self, system, system_pops, times):
         mpl.use("Qt5Agg")
         cmap = plt.get_cmap("viridis")
-        cvals = np.linspace(0, 1, len(system.planets))
+        cvals = np.linspace(0, 1, len(system_pops))
         vector_list = []
-        planet_inds = []
         for planet in system.planets:
             # Create all planet position vectors
             # planet_vectors = planet.calc_vectors(times)
             # vector_list.append(planet_vectors)
             vector_list.append(utils.calc_position_vectors(planet, times))
 
+        azim_range = np.linspace(15, 75, len(times))
+        elev_range = np.linspace(20, 30, len(times))
+        roll_range = np.linspace(0, 10, len(times))
         for ind, t in enumerate(tqdm(times)):
-            fig, (ax, pdet_ax) = plt.subplots(ncols=2, figsize=[10, 5])
+            planet_inds = []
+            color_mapping = {}
+            fig = plt.figure(figsize=(12, 6))
+            ax = fig.add_subplot(1, 2, 1, projection="3d")
+            ax.view_init(elev_range[0], azim_range[ind], roll_range[0])
+            pdet_ax = fig.add_subplot(1, 2, 2)
+            current_cmap_ind = 0
+            # fig, (ax, pdet_ax) = plt.subplots(ncols=2, figsize=[10, 5])
             # Add inner working angle
-            IWA_ang = 0.058 * u.arcsec
-            IWA_patch = mpatches.Circle(
-                (0, 0),
-                IWA_ang.to(u.arcsec).value,
-                facecolor="grey",
-                edgecolor="black",
-                alpha=0.1,
-                zorder=5,
-            )
-            ax.add_patch(IWA_patch)
+            # IWA_ang = 0.058 * u.arcsec
+            # IWA_patch = mpatches.Circle(
+            #     (0, 0),
+            #     IWA_ang.to(u.arcsec).value,
+            #     facecolor="grey",
+            #     edgecolor="black",
+            #     alpha=0.1,
+            #     zorder=5,
+            # )
+            # ax.add_patch(IWA_patch)
             # Add the planet populations
             for pop in system_pops:
                 planet_inds.append(pop.closest_planet_ind)
-                color = cmap(cvals[pop.closest_planet_ind])
+                color = cmap(cvals[current_cmap_ind])
+                color_mapping[pop.closest_planet_ind] = color
+                current_cmap_ind += 1
                 vectors = utils.calc_position_vectors(pop, Time([t.jd], format="jd"))
-                ax.scatter(
+                x = (
                     (np.arctan((vectors["x"][0] * u.m) / system.star.dist))
                     .to(u.arcsec)
-                    .value,
+                    .value
+                )
+                y = (
                     (np.arctan((vectors["y"][0] * u.m) / system.star.dist))
                     .to(u.arcsec)
-                    .value,
+                    .value
+                )
+                z = (
+                    (np.arctan((vectors["z"][0] * u.m) / system.star.dist))
+                    .to(u.arcsec)
+                    .value
+                )
+                ax.scatter(
+                    x,
+                    y,
+                    z,
                     # (vectors["x"][0] * u.m).to(u.AU).value,
                     # (vectors["y"][0] * u.m).to(u.AU).value,
                     alpha=0.75,
                     color=color,
                     s=0.01,
                 )
+                # ax.plot3D(x, y, z, alpha=0.75, color=color, s=0.01)
                 # pop.pdet[:ind]
                 pdet_ax.plot(times.decimalyear[:ind], pop.pdet[:ind], color=color)
             # Add the real planets
@@ -140,22 +156,28 @@ class PDet:
                 pos = utils.calc_position_vectors(planet, Time([t.jd], format="jd"))
                 if i in planet_inds:
                     # Make the planets with orbit fits colorful
-                    color = cmap(cvals[i])
+                    color = color_mapping[i]
+                    # color = cmap(cvals[i])
                     edge = "k"
-                    ms = self.planet_marker_size(
-                        pos.z,
-                        vector_list[i].z,
-                        base_size=5 + planet.radius.to(u.R_earth).value,
-                        factor=0.2,
-                    )[0]
+                    # ms = self.planet_marker_size(
+                    #     pos.z,
+                    #     vector_list[i].z,
+                    #     base_size=5 + planet.radius.to(u.R_earth).value,
+                    #     factor=0.2,
+                    # )[0]
+                    ms = 5
                 else:
                     # Make the others black
                     color = "w"
                     edge = "k"
                     ms = 0.2
+                x = (np.arctan((pos.x[0] * u.m) / system.star.dist)).to(u.arcsec).value
+                y = (np.arctan((pos.y[0] * u.m) / system.star.dist)).to(u.arcsec).value
+                z = (np.arctan((pos.z[0] * u.m) / system.star.dist)).to(u.arcsec).value
                 ax.scatter(
                     (np.arctan((pos.x[0] * u.m) / system.star.dist)).to(u.arcsec).value,
                     (np.arctan((pos.y[0] * u.m) / system.star.dist)).to(u.arcsec).value,
+                    z,
                     # (pos.x[0] * u.m).to(u.AU),
                     # (pos.y[0] * u.m).to(u.AU),
                     # planet.vectors.y[ind] * (u.m.to(u.AU)),
@@ -164,15 +186,23 @@ class PDet:
                     edgecolor=edge,
                     s=ms,
                 )
-            ax.set_xlim([-0.4, 0.4])
-            ax.set_ylim([-0.4, 0.4])
-            ax.set_xlabel("arcsec")
-            ax.set_ylabel("arcsec")
-            ax.set_title(f"Image plane: {t.decimalyear:.02f} yr")
+                # ax.plot3D(x, y, z, color=color)
+            ax.set_xlim([-2.5, 2.5])
+            ax.set_ylim([-2.5, 2.5])
+            ax.set_zlim([-2.5, 2.5])
+            ax.set_xlabel("x arcsec")
+            ax.set_ylabel("y arcsec")
+            ax.set_zlabel("z arcsec")
+            ax.set_title(f"Time: {t.decimalyear:.02f}")
             pdet_ax.set_xlim([times.decimalyear[0], times.decimalyear[-1]])
             pdet_ax.set_ylim([-0.05, 1.05])
             pdet_ax.set_title("Probability of detection")
-            fig.savefig(f"figs/{system.star.name}_{ind:03}.png")
+            fig.savefig(
+                f"figs/{system.star.name}_{ind:03}.png",
+                dpi=300,
+                facecolor="white",
+                transparent=False,
+            )
             # if ax.get_subplotspec().is_first_col():
             #     ax.annotate(
             #         "IWA",
@@ -223,37 +253,22 @@ class PlanetPopulation:
                 The system data
         """
 
-        if method == "multivariate gaussian":
-            self.cov_samples = 1000
-        self.droppable_cols = ["lnprobability"]
+        self.method = method
+        self.method_name = method["name"]
         self.n_fits = n_fits
         self.fixed_inc = fixed_inc
         self.fixed_p = fixed_p
         self.fixed_f_sed = fixed_f_sed
 
+        # Create the fitting basis params based on the desired method
+        if self.method_name == "multivariate gaussian":
+            self.cov_samples = method["cov_samples"]
+            self.setup_mg(chains, nplan)
+        elif self.method_name == "credible interval":
+            self.setup_ci(chains, nplan)
+
         self.dist_to_star = system.star.dist
         self.Ms = system.star.mass
-        self.samples_for_cov = (
-            chains.pipe(self.start_pipeline)
-            .pipe(self.sort_by_lnprob)
-            .pipe(self.get_samples_for_covariance)
-            .pipe(self.drop_columns)
-        )
-        self.cov_df = self.samples_for_cov.cov()
-        self.chains_means = (
-            chains.pipe(self.start_pipeline).pipe(self.drop_columns).mean()
-        )
-        chain_samples_np = np.random.multivariate_normal(
-            self.chains_means, self.cov_df, size=self.n_fits
-        )
-        chain_samples = pd.DataFrame(chain_samples_np, columns=self.cov_df.keys())
-
-        # Use those samples and assign the values
-        self.T = chain_samples[f"per{nplan}"].to_numpy() * u.d
-        self.secosw = chain_samples[f"secosw{nplan}"].to_numpy()
-        self.sesinw = chain_samples[f"sesinw{nplan}"].to_numpy()
-        self.K = chain_samples[f"k{nplan}"].to_numpy()
-        self.T_c = Time(chain_samples[f"tc{nplan}"].to_numpy(), format="jd")
 
         # Cheating and using the most likely planet's W value instead of random
         # sampling because it doesn't impact imaging, just makes the plots
@@ -361,6 +376,56 @@ class PlanetPopulation:
             self.f_sed = np.ones(self.n_fits) * self.fixed_f_sed
         pass
 
+    def setup_mg(self, chains, nplan):
+        self.droppable_cols = ["lnprobability"]
+        self.samples_for_cov = (
+            chains.pipe(self.start_pipeline)
+            .pipe(self.sort_by_lnprob)
+            .pipe(self.get_samples_for_covariance)
+            .pipe(self.drop_columns)
+        )
+        self.cov_df = self.samples_for_cov.cov()
+        self.chains_means = (
+            chains.pipe(self.start_pipeline).pipe(self.drop_columns).mean()
+        )
+        chain_samples_np = np.random.multivariate_normal(
+            self.chains_means, self.cov_df, size=self.n_fits
+        )
+        chain_samples = pd.DataFrame(chain_samples_np, columns=self.cov_df.keys())
+        # Use those samples and assign the values
+        self.T = chain_samples[f"per{nplan}"].to_numpy() * u.d
+        self.secosw = chain_samples[f"secosw{nplan}"].to_numpy()
+        self.sesinw = chain_samples[f"sesinw{nplan}"].to_numpy()
+        self.K = chain_samples[f"k{nplan}"].to_numpy()
+        self.T_c = Time(chain_samples[f"tc{nplan}"].to_numpy(), format="jd")
+
+    def setup_ci(self, chains, nplan):
+        quantiles = chains.quantile(0.5)
+        std = chains.std()
+        self.T = (
+            np.random.normal(
+                quantiles[f"per{nplan}"], std[f"per{nplan}"], size=self.n_fits
+            )
+            * u.d
+        )
+        self.secosw = np.random.normal(
+            quantiles[f"secosw{nplan}"], std[f"secosw{nplan}"], size=self.n_fits
+        )
+        self.sesinw = np.random.normal(
+            quantiles[f"sesinw{nplan}"], std[f"sesinw{nplan}"], size=self.n_fits
+        )
+        self.K = (
+            np.random.normal(quantiles[f"k{nplan}"], std[f"k{nplan}"], size=self.n_fits)
+            * u.m
+            / u.s
+        )
+        self.T_c = Time(
+            np.random.normal(
+                quantiles[f"tc{nplan}"], std[f"tc{nplan}"], size=self.n_fits
+            ),
+            format="jd",
+        )
+
     def prop_for_imaging(self, t):
         # Calculates the working angle and deltaMag
         a, e, I, w = self.a, self.e, self.inc, self.w
@@ -418,7 +483,8 @@ class PlanetPopulation:
 
     def calc_radius_from_mass(self, Mp):
 
-        """Calculate planet radius from mass
+        """
+        Calculate planet radius from mass, stolen from EXOSIMS
 
         Args:
             Mp (astropy Quantity array):
@@ -455,10 +521,6 @@ class PlanetPopulation:
         m = np.array(Mp.to(u.M_earth).value, ndmin=1)
         R = np.zeros(m.shape)
 
-        # inds = np.digitize(m, np.hstack((0, T, np.inf)))
-        # breakpoint()
-        # for j in range(1, min(inds.max() + 1), 5):
-        #     R[inds == j] = 10.0 ** (C[j - 1] + np.log10(m[inds == j]) * S[j - 1])
         inds = np.digitize(m, np.hstack((0, T, np.inf)))
         for j in range(1, inds.max() + 1):
             R[inds == j] = 10.0 ** (C[j - 1] + np.log10(m[inds == j]) * S[j - 1])

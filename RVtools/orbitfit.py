@@ -18,22 +18,22 @@ class OrbitFit:
     Base class to do orbit fitting.
     """
 
-    def __init__(self, params, library, universe, surveys, workers):
+    def __init__(self, params, universe, surveys, workers):
         self.method = params["fitting_method"]
         self.max_planets = params["max_planets"]
         self.workers = workers
         self.universe_dir = Path(params["universe_dir"])
 
         # self.systems_to_fit = params["systems_to_fit"]
-        self.paths = {}
+        self.paths = []
         self.planets_fitted = {}
 
         # Sort surveys by fit order
         # for survey_ind in fit_order:
         #     survey = surveys[survey_ind]
-        self.use_rvsearch(library, universe, surveys)
+        self.use_rvsearch(universe, surveys)
 
-    def use_rvsearch(self, library, universe, surveys):
+    def use_rvsearch(self, universe, surveys):
         """
         This method takes in the precursor observation object and the universe
         object to run orbit fitting with the RVsearch tool.
@@ -42,8 +42,8 @@ class OrbitFit:
         for survey in surveys:
             start_time = time.time()
             fits_completed = 0
-            systems_to_fit = survey.systems_to_observe
-            for i, system_id in enumerate(systems_to_fit):
+            self.systems_to_fit = survey.systems_to_observe
+            for i, system_id in enumerate(self.systems_to_fit):
                 rv_df = survey.syst_observations[system_id]
                 system = universe.systems[system_id]
                 star_name = system.star.name
@@ -57,18 +57,21 @@ class OrbitFit:
                     (k_vals > k_cutoff) & (system.getpattr("T") < 75 * u.yr)
                 )
                 max_planets = min([feasible_max, self.max_planets])
-                if max_planets == 0:
-                    logger.warning(f"No detections feasible around {star_name}.")
-                    continue
-
                 # Handle caching of fits, structure is that each system
                 system_path = f"{self.universe_dir}/{star_name}"
                 # Directory to save fit based on max number of planets ("depth")
                 survey_path = Path(system_path, survey.name)
+                fit_dir = Path(survey_path, f"{max_planets}_depth")
+                self.paths.append(fit_dir)
+                if max_planets == 0:
+                    logger.warning(f"No detections feasible around {star_name}.")
+                    continue
+
+                # Check the folder for previous fits
                 has_fit, prev_max, fitting_done, _ = utils.check_orbitfit_dir(
                     survey_path
                 )
-                # best_candidate_fit = utils.prev_best_fit(system_path, survey.name)
+                best_candidate_fit = utils.prev_best_fit(system_path, survey.name)
 
                 # Path(system_path).mkdir(exist_ok=True)
 
@@ -98,24 +101,24 @@ class OrbitFit:
 
                             # Set new maximum planets
                             searcher.max_planets = max_planets
-                    # elif (best_candidate_fit["folder"] is not None) and (
-                    #     best_candidate_fit["max_planets"] > 1
-                    # ):
-                    #     # Second best scenario is if another fit has been done with
-                    #     # worse data that we can start with and then improve by using
-                    #     # better data
-                    #     logger.info(
-                    #         (
-                    #             f"Loading previous fit information on {star_name} "
-                    #             f"from {best_candidate_fit['search_path']}."
-                    #         )
-                    #     )
-                    #     searcher = self.change_post(
-                    #         survey,
-                    #         rv_df,
-                    #         max_planets,
-                    #         best_candidate_fit["search_path"],
-                    #     )
+                    elif (best_candidate_fit["folder"] is not None) and (
+                        best_candidate_fit["prev_max"] > 1
+                    ):
+                        # Second best scenario is if another fit has been done with
+                        # worse data that we can start with and then improve by using
+                        # better data
+                        logger.info(
+                            (
+                                f"Loading previous fit information on {star_name} "
+                                f"from {best_candidate_fit['search_path']}."
+                            )
+                        )
+                        searcher = self.change_post(
+                            survey,
+                            rv_df,
+                            max_planets,
+                            best_candidate_fit["search_path"],
+                        )
                     else:
                         searcher = search.Search(
                             rv_df,
@@ -127,10 +130,9 @@ class OrbitFit:
                             mstar=(system.star.mass.to(u.M_sun).value, 0),
                         )
 
-                    fit_dir = Path(survey_path, f"{max_planets}_depth")
                     if fits_completed > 0:
                         current_time = time.time()
-                        runs_left = len(systems_to_fit) - i
+                        runs_left = len(self.systems_to_fit) - i
                         elapsed_time = current_time - start_time
                         rate = elapsed_time / fits_completed
                         finish_time = datetime.fromtimestamp(
@@ -142,7 +144,7 @@ class OrbitFit:
                     logger.info(
                         (
                             f"Searching {star_name} for up to {max_planets} planets."
-                            f" Star {i+1} of {len(systems_to_fit)}. "
+                            f" Star {i+1} of {len(self.systems_to_fit)}. "
                             f"Estimated finish for orbit fitting: {finish_str}"
                         )
                     )
@@ -186,7 +188,7 @@ class OrbitFit:
                         )
 
                     # Save specs
-                    library.update(fit_dir, fit_spec)
+                    utils.update(fit_dir, fit_spec)
 
     def change_post(self, survey, rv_df, max_planets, search_path):
         """

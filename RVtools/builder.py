@@ -9,7 +9,7 @@ from pathlib import Path
 import dill
 import numpy as np
 
-from RVtools.library import Library
+import RVtools.utils as utils
 from RVtools.logger import logger
 from RVtools.orbitfit import OrbitFit
 from RVtools.pdet import PDet
@@ -56,8 +56,8 @@ class BaseBuilder(Builder):
         self.reset()
 
     def reset(self):
-        self.library = Library(self.cache_dir)
-        self.rvdata = RVData(self.cache_dir, self.workers, self.library)
+        # self.library = Library(self.cache_dir)
+        self.rvdata = RVData(self.cache_dir, self.workers)
         # self.rvdata.workers = self.workers
         # self.cache_universe = False
         # self.cache_preobs = False
@@ -171,10 +171,9 @@ class RVData:
     always follow the same interface.
     """
 
-    def __init__(self, cache_dir, workers, library):
+    def __init__(self, cache_dir, workers):
         self.cache_dir = cache_dir
         self.workers = workers
-        self.library = library
 
     def create_universe(self, universe_params):
         universe_type = universe_params["universe_type"]
@@ -286,10 +285,10 @@ class RVData:
             tmp_file.unlink()
 
         # Update library
-        self.library.update(self.universe_dir, universe_spec)
+        utils.update(self.universe_dir, universe_spec)
 
         if "forced_seed" in universe_params.keys():
-            universe_params['script'] = original_script
+            universe_params["script"] = original_script
 
     def precursor_observations(self, preobs_params):
         assert hasattr(
@@ -408,16 +407,16 @@ class RVData:
         #     logger.info(f"Created precursor observations, saved to {self.preobs_path}")
 
         # Update library
-        # self.library.update(self.preobs_dir, preobs_spec)
+        # utils.update(self.preobs_dir, preobs_spec)
 
     def orbit_fitting(self, orbitfit_params):
         orbitfit_params["universe_dir"] = self.universe_dir
         self.orbitfit = OrbitFit(
-            orbitfit_params, self.library, self.universe, self.surveys, self.workers
+            orbitfit_params, self.universe, self.surveys, self.workers
         )
 
     def calc_pdet(self, pdet_params):
-        self.pdet = PDet(pdet_params, self.orbitfit, self.universe, self.library)
+        self.pdet = PDet(pdet_params, self.orbitfit, self.universe)
 
     def list_parts(self) -> None:
         print(f"RVData parts: {', '.join(self.parts)}", end="")
@@ -463,7 +462,7 @@ class Director:
     def run_seeds(self, seeds):
         for seed in seeds:
             self.builder.universe_params["forced_seed"] = int(seed)
-            self.build_orbit_fits()
+            self.build_full_info()
 
     def build_full_info(self) -> None:
         self.builder.create_universe()

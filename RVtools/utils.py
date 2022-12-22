@@ -9,6 +9,8 @@ import pandas as pd
 from keplertools import fun as kt
 from tqdm import tqdm
 
+from RVtools.logger import logger
+
 
 def runcmd(cmd, verbose=False):
     process = subprocess.Popen(
@@ -122,6 +124,32 @@ def calc_position_vectors(obj, times):
     r = {"x": x, "y": y, "z": z, "vx": vx, "vy": vy, "vz": vz, "t": times.jd}
     full_vector = pd.DataFrame(r)
     return full_vector
+
+
+def update(path, spec):
+    """
+    Function to update library with newly generated parameters
+    """
+    spec_path = Path(path, "spec.json")
+    if spec_path.exists():
+        # Load it to see if it has to be overwritten
+        with open(spec_path, "r") as f:
+            old_spec = json.load(f)
+
+        # If they're the same then nothing needs to be done
+        if spec == old_spec:
+            needs_update = False
+        else:
+            needs_update = True
+    else:
+        needs_update = True
+
+    if needs_update:
+        with open(spec_path, "w") as f:
+            json.dump(spec, f)
+        logger.info(f"Saved new specification to {spec_path}.")
+    else:
+        logger.info(f"Found up to date specification at {spec_path}.")
 
 
 def prev_best_fit(dir, survey_name):
@@ -251,3 +279,7 @@ def check_orbitfit_dir(dir):
                 fitting_done = False
 
     return has_fit, prev_max, fitting_done, search_file
+
+
+def dim_dMag_curve():
+    pass
