@@ -1,3 +1,4 @@
+import json
 import pickle
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from tqdm import tqdm
 import radvel.orbit as rvo
 import radvel.utils as rvu
 import RVtools.utils as utils
+from EXOSIMS.util.get_module import get_module_from_specs
 from RVtools.logger import logger
 
 
@@ -25,6 +27,11 @@ class PDet:
     def __init__(self, params, orbitfit, universe):
         self.method = params["construction_method"]
         # self.systems_of_interest = params["systems_of_interest"]
+        script_path = Path(params["script"])
+        with open(script_path) as f:
+            specs = json.loads(f.read())
+        self.SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
+        breakpoint()
         self.n_fits = params["number_of_orbits"]
         start_time = params["start_time"]
         end_time = params["end_time"]
@@ -454,7 +461,8 @@ class PlanetPopulation:
         dMag = -2.5 * np.log10(p_phi * ((self.Rp / r).decompose()) ** 2).value
         return WA, dMag
 
-    def calculate_pdet(self, times):
+    def calculate_pdet(self, times, OS):
+        breakpoint()
         IWA = 0.058 * u.arcsec
         OWA = 6 * u.arcsec
         dMag0 = 26.5
