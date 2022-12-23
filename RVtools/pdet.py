@@ -9,6 +9,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import xarray as xr
 from astropy.time import Time
 from keplertools import fun as kt
 from scipy._lib._util import MapWrapper
@@ -43,57 +44,74 @@ class PDet:
 
         # Loop through all the systems we want to calculate probability of
         # detection for
-        # if system_id in orbitfit.paths.keys():
-        # system_path = orbitfit.paths[system_id]
-        # planets_fitted = orbitfit.planets_fitted[system_id]
         # Check for the chains
         for system_id, system_path in zip(orbitfit.systems_to_fit, orbitfit.paths):
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
+            pdet_path = Path(system_path, "pdet.nc")
             if chains_path.exists():
-                logger.info(
-                    (
-                        "Loading chains and search data for "
-                        f"{universe.names[system_id]}."
-                    )
-                )
-                chains = pd.read_csv(chains_path, compression="bz2")
-                with open(search_path, "rb") as f:
-                    search = pickle.load(f)
-                planets_fitted = search.post.params.num_planets
-                system = universe.systems[system_id]
-                system_pops = []
-                int_times = self.gen_int_times(self.SS)
-                dMag0s = self.gen_dMag0s(self.SS, system)
-                system_pdets = pd.DataFrame(
-                    np.zeros((len(int_times), len(self.pdet_times))),
-                    columns=self.pdet_times,
-                )
-                system_pdets.index = int_times
-                for i, planet_num in enumerate(
-                    tqdm(
-                        range(1, planets_fitted + 1),
-                        desc=f"Probability of detection for {system.star.name}",
-                        position=0,
-                    )
-                ):
-                    planet_chains = self.split_chains(chains, planet_num)
-                    system_pops.append(
-                        PlanetPopulation(
-                            planet_chains,
-                            system,
-                            self.method,
-                            self.n_fits,
-                            planet_num,
+                if not pdet_path.exists():
+                    logger.info(
+                        (
+                            "Loading chains and search data for "
+                            f"{universe.names[system_id]}."
                         )
                     )
-                    system_pops[i].calculate_pdet(
-                        self.pdet_times, int_times, dMag0s, self.SS, workers=workers
+                    chains = pd.read_csv(chains_path, compression="bz2")
+                    with open(search_path, "rb") as f:
+                        search = pickle.load(f)
+                    planets_fitted = search.post.params.num_planets
+                    system = universe.systems[system_id]
+                    system_pops = []
+                    int_times = self.gen_int_times(self.SS)
+                    dMag0s = self.gen_dMag0s(self.SS, system)
+                    system_pdets = pd.DataFrame(
+                        np.zeros((len(int_times), len(self.pdet_times))),
+                        columns=self.pdet_times,
                     )
-                    system_pdets = system_pdets.add(system_pops[i].pdets)
+                    system_pdets.index = int_times
+                    logger.info(
+                        f"Calculating probability of detection for {system.star.name}"
+                    )
+                    for i, planet_num in enumerate(
+                        tqdm(
+                            range(1, planets_fitted + 1),
+                            position=0,
+                        )
+                    ):
+                        planet_chains = self.split_chains(chains, planet_num)
+                        system_pops.append(
+                            PlanetPopulation(
+                                planet_chains,
+                                system,
+                                self.method,
+                                self.n_fits,
+                                planet_num,
+                            )
+                        )
+                        system_pops[i].calculate_pdet(
+                            self.pdet_times, int_times, dMag0s, self.SS, workers=workers
+                        )
+                        system_pdets = system_pdets.add(system_pops[i].pdets)
+                    pdet_xr = xr.DataArray(
+                        np.stack([pop.pdets for pop in system_pops]),
+                        dims=["planet", "int_time", "time"],
+                        coords=[
+                            np.arange(0, planets_fitted, 1),
+                            int_times,
+                            self.pdet_times.datetime,
+                        ],
+                    )
+                    self.plot(system, system_pops, self.pdet_times, system_pdets)
+                    breakpoint()
+                    pdet_xr.to_netcdf(pdet_path)
+                else:
+                    logger.info(
+                        f"Probability of detection already exists for"
+                        f" {universe.systems[system_id].star.name}"
+                    )
 
                 # TEMPORARY PLOTTING
-                self.plot(system, system_pops, self.pdet_times, system_pdets)
                 # self.pops[system_id] = PlanetPopulation(
                 #     planet_chains, system, self.method
                 # )
