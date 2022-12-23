@@ -1,5 +1,6 @@
 import json
 import pickle
+from multiprocessing import Value
 from pathlib import Path
 
 import astropy.constants as const
@@ -10,10 +11,12 @@ import numpy as np
 import pandas as pd
 from astropy.time import Time
 from keplertools import fun as kt
+from scipy._lib._util import MapWrapper
 from tqdm import tqdm
 
 import radvel.orbit as rvo
 import radvel.utils as rvu
+import RVtools.plots
 import RVtools.utils as utils
 from EXOSIMS.util.get_module import get_module_from_specs
 from RVtools.logger import logger
@@ -24,18 +27,17 @@ class PDet:
     Base class to do probability of detection calculations
     """
 
-    def __init__(self, params, orbitfit, universe):
+    def __init__(self, params, orbitfit, universe, workers):
         self.method = params["construction_method"]
         # self.systems_of_interest = params["systems_of_interest"]
         script_path = Path(params["script"])
         with open(script_path) as f:
             specs = json.loads(f.read())
         self.SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
-        breakpoint()
         self.n_fits = params["number_of_orbits"]
         start_time = params["start_time"]
         end_time = params["end_time"]
-        self.pdet_times = Time(np.arange(start_time.jd, end_time.jd, 25), format="jd")
+        self.pdet_times = Time(np.arange(start_time.jd, end_time.jd, 1), format="jd")
 
         self.pops = {}
 
@@ -61,6 +63,13 @@ class PDet:
                 planets_fitted = search.post.params.num_planets
                 system = universe.systems[system_id]
                 system_pops = []
+                int_times = self.gen_int_times(self.SS)
+                dMag0s = self.gen_dMag0s(self.SS, system)
+                system_pdets = pd.DataFrame(
+                    np.zeros((len(int_times), len(self.pdet_times))),
+                    columns=self.pdet_times,
+                )
+                system_pdets.index = int_times
                 for i, planet_num in enumerate(range(1, planets_fitted + 1)):
                     planet_chains = self.split_chains(chains, planet_num)
                     system_pops.append(
@@ -72,15 +81,66 @@ class PDet:
                             planet_num,
                         )
                     )
-                    system_pops[i].calculate_pdet(self.pdet_times)
+                    system_pops[i].calculate_pdet(
+                        self.pdet_times, int_times, dMag0s, self.SS, workers=workers
+                    )
+                    system_pdets = system_pdets.add(system_pops[i].pdets)
 
                 # TEMPORARY PLOTTING
-                self.plot(system, system_pops, self.pdet_times)
+                self.plot(system, system_pops, self.pdet_times, system_pdets)
                 # self.pops[system_id] = PlanetPopulation(
                 #     planet_chains, system, self.method
                 # )
             else:
                 logger.warning(f"No chains were created for system {system_id}")
+
+    def gen_dMag0s(self, SS, system):
+        TL = SS.TargetList
+        OS = TL.OpticalSystem
+        ZL = TL.ZodiacalLight
+        IWA = OS.IWA
+        OWA = OS.OWA
+        mid_WA = (IWA + OWA) / 2
+        fZ = ZL.fZ0
+        fEZ = ZL.fEZ0
+        mode = list(
+            filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+        )[0]
+        min_time = 1 * u.hr
+        max_time = OS.intCutoff
+
+        target_sInd = np.where(TL.Name == system.star.name.replace("_", " "))[0][0]
+        int_times = (
+            np.logspace(
+                0,
+                np.log10((max_time / min_time).decompose()).value,
+                int(max_time.to(u.day).value),
+            )
+            * min_time
+        ).to(u.d)
+        dMag0s = []
+        for int_time in int_times:
+            dMag0s.append(
+                OS.calc_dMag_per_intTime(
+                    int_time, TL, target_sInd, fZ, fEZ, mid_WA, mode
+                )
+            )
+        return dMag0s
+
+    def gen_int_times(self, SS):
+        TL = SS.TargetList
+        OS = TL.OpticalSystem
+        min_time = 1 * u.hr
+        max_time = OS.intCutoff
+        int_times = (
+            np.logspace(
+                0,
+                np.log10((max_time / min_time).decompose()).value,
+                int(max_time.to(u.day).value),
+            )
+            * min_time
+        ).to(u.d)
+        return int_times
 
     def split_chains(self, chains, nplan):
         cols_to_rename = ["secosw", "sesinw", "e", "per", "tc", "k"]
@@ -89,7 +149,7 @@ class PDet:
         p_chains = chains.loc[:, df_cols]
         return p_chains
 
-    def plot(self, system, system_pops, times):
+    def plot(self, system, system_pops, times, system_pdets):
         mpl.use("Qt5Agg")
         cmap = plt.get_cmap("viridis")
         cvals = np.linspace(0, 1, len(system_pops))
@@ -111,53 +171,15 @@ class PDet:
             ax.view_init(elev_range[0], azim_range[ind], roll_range[0])
             pdet_ax = fig.add_subplot(1, 2, 2)
             current_cmap_ind = 0
-            # fig, (ax, pdet_ax) = plt.subplots(ncols=2, figsize=[10, 5])
-            # Add inner working angle
-            # IWA_ang = 0.058 * u.arcsec
-            # IWA_patch = mpatches.Circle(
-            #     (0, 0),
-            #     IWA_ang.to(u.arcsec).value,
-            #     facecolor="grey",
-            #     edgecolor="black",
-            #     alpha=0.1,
-            #     zorder=5,
-            # )
-            # ax.add_patch(IWA_patch)
             # Add the planet populations
             for pop in system_pops:
                 planet_inds.append(pop.closest_planet_ind)
                 color = cmap(cvals[current_cmap_ind])
                 color_mapping[pop.closest_planet_ind] = color
                 current_cmap_ind += 1
-                vectors = utils.calc_position_vectors(pop, Time([t.jd], format="jd"))
-                x = (
-                    (np.arctan((vectors["x"][0] * u.m) / system.star.dist))
-                    .to(u.arcsec)
-                    .value
-                )
-                y = (
-                    (np.arctan((vectors["y"][0] * u.m) / system.star.dist))
-                    .to(u.arcsec)
-                    .value
-                )
-                z = (
-                    (np.arctan((vectors["z"][0] * u.m) / system.star.dist))
-                    .to(u.arcsec)
-                    .value
-                )
-                ax.scatter(
-                    x,
-                    y,
-                    z,
-                    # (vectors["x"][0] * u.m).to(u.AU).value,
-                    # (vectors["y"][0] * u.m).to(u.AU).value,
-                    alpha=0.75,
-                    color=color,
-                    s=0.01,
-                )
-                # ax.plot3D(x, y, z, alpha=0.75, color=color, s=0.01)
-                # pop.pdet[:ind]
-                pdet_ax.plot(times.decimalyear[:ind], pop.pdet[:ind], color=color)
+                ax = RVtools.plots.pop_3d(ax, pop, t.jd, color)
+            breakpoint()
+            pdet_ax.plot(times.decimalyear[:ind], pop.pdets[:ind], color=color)
             # Add the real planets
             for i, planet in enumerate(system.planets):
                 pos = utils.calc_position_vectors(planet, Time([t.jd], format="jd"))
@@ -182,8 +204,8 @@ class PDet:
                 y = (np.arctan((pos.y[0] * u.m) / system.star.dist)).to(u.arcsec).value
                 z = (np.arctan((pos.z[0] * u.m) / system.star.dist)).to(u.arcsec).value
                 ax.scatter(
-                    (np.arctan((pos.x[0] * u.m) / system.star.dist)).to(u.arcsec).value,
-                    (np.arctan((pos.y[0] * u.m) / system.star.dist)).to(u.arcsec).value,
+                    x,
+                    y,
                     z,
                     # (pos.x[0] * u.m).to(u.AU),
                     # (pos.y[0] * u.m).to(u.AU),
@@ -276,6 +298,8 @@ class PlanetPopulation:
 
         self.dist_to_star = system.star.dist
         self.Ms = system.star.mass
+        # self.id = system.star.id
+        self.name = system.star.name.replace("_", " ")
 
         # Cheating and using the most likely planet's W value instead of random
         # sampling because it doesn't impact imaging, just makes the plots
@@ -289,8 +313,6 @@ class PlanetPopulation:
                 planet_vals[ind] += i
         self.closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
         self.W = np.ones(len(self.T)) * p_df.at[self.closest_planet_ind, "W"] * u.deg
-
-        self.pdet = []
 
         self.create_population()
 
@@ -461,16 +483,72 @@ class PlanetPopulation:
         dMag = -2.5 * np.log10(p_phi * ((self.Rp / r).decompose()) ** 2).value
         return WA, dMag
 
-    def calculate_pdet(self, times, OS):
-        breakpoint()
-        IWA = 0.058 * u.arcsec
-        OWA = 6 * u.arcsec
-        dMag0 = 26.5
-        for t in times:
-            WA, dMag = self.prop_for_imaging(t)
-            visible = (IWA < WA) & (OWA > WA) & (dMag0 > dMag)
-            self.pdet.append(sum(visible) / self.n_fits)
-        self.pdet = np.array(self.pdet)
+    def calculate_pdet(self, obs_times, int_times, dMag0s, SS, workers=1):
+        # Unpacking necessary values
+        TL = SS.TargetList
+        OS = TL.OpticalSystem
+        IWA = OS.IWA
+        OWA = OS.OWA
+        mode = list(
+            filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+        )[0]
+        target_sInd = np.where(TL.Name == self.name)[0][0]
+        target_ko = SS.koMaps[mode["syst"]["name"]][target_sInd]
+        koT = SS.koTimes
+
+        # Calculating the WA and dMag values of all orbits at all times
+        with MapWrapper(pool=workers) as mapper:
+            output = mapper(self.WA_dMag_obj, obs_times)
+        all_WAs = []
+        all_dMags = []
+        for chunk in output:
+            all_WAs.append(chunk[0])
+            all_dMags.append(chunk[1])
+
+        # Getting pdet value at each observing time for all integration times
+        # Setup for parallelization
+        args = (koT, target_ko, IWA, OWA, all_WAs, all_dMags, int_times, dMag0s)
+        func = _obj_wrapper(self.pdet_obj, args)
+        func_args = tuple(enumerate(obs_times))
+
+        # Adding progress bar
+        global pbar
+        global counter
+        counter = Value("i", 0, lock=True)
+        pbar = TqdmUpTo(total=len(obs_times))
+
+        # Do calculations
+        with MapWrapper(pool=workers) as mapper:
+            output = mapper(func, func_args)
+
+        # Turn output list of lists into a dataframe
+        output_arr = np.array(output)
+        self.pdets = pd.DataFrame(output_arr.T, columns=obs_times)
+        self.pdets.index = int_times
+
+    def WA_dMag_obj(self, obs_time):
+        WA, dMag = self.prop_for_imaging(obs_time)
+        return (WA, dMag)
+
+    def pdet_obj(
+        self, vals, koT, target_ko, IWA, OWA, all_WAs, all_dMags, int_times, dMag0s
+    ):
+        counter.value += 1
+        pbar.update_to(counter.value)
+        j, obs_time = vals[0], vals[1]
+        WA, dMag = all_WAs[j], all_dMags[j]
+        pdets = []
+        for i, int_time in enumerate(int_times):
+            final_time = obs_time + int_time
+            relevant_ko = target_ko[(koT.jd <= final_time.jd) & (koT.jd >= obs_time.jd)]
+            if np.any(relevant_ko is False):
+                # If any part of the observation would be in keepout,
+                # ignore this observation time
+                pass
+            else:
+                visible = (IWA < WA) & (OWA > WA) & (dMag0s[i] > dMag)
+                pdets.append(sum(visible) / self.n_fits)
+        return pdets
 
     def lambert_func(self, beta):
         return (np.sin(beta) * u.rad + (np.pi * u.rad - beta) * np.cos(beta)) / (
@@ -534,3 +612,33 @@ class PlanetPopulation:
             R[inds == j] = 10.0 ** (C[j - 1] + np.log10(m[inds == j]) * S[j - 1])
 
         return R * u.R_earth
+
+
+class TqdmUpTo(tqdm):
+    """Provides `update_to(n)` which uses `tqdm.update(delta_n)`."""
+
+    def update_to(self, b=1, bsize=1, tsize=None):
+        """
+        b  : int, optional
+            Number of blocks transferred so far [default: 1].
+        bsize  : int, optional
+            Size of each block (in tqdm units) [default: 1].
+        tsize  : int, optional
+            Total size (in tqdm units). If [default: None] remains unchanged.
+        """
+        if tsize is not None:
+            self.total = tsize
+        self.update(b * bsize - self.n)  # will also set self.n = b * bsize
+
+
+class _obj_wrapper:
+    """
+    Object to wrap the objective function with it's arguments
+    """
+
+    def __init__(self, f, args):
+        self.f = f
+        self.args = args
+
+    def __call__(self, x):
+        return self.f(np.asarray(x), *self.args)

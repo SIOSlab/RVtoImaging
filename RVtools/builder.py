@@ -416,7 +416,7 @@ class RVData:
         )
 
     def calc_pdet(self, pdet_params):
-        self.pdet = PDet(pdet_params, self.orbitfit, self.universe)
+        self.pdet = PDet(pdet_params, self.orbitfit, self.universe, self.workers)
 
     def list_parts(self) -> None:
         print(f"RVData parts: {', '.join(self.parts)}", end="")
