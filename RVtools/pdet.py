@@ -70,7 +70,13 @@ class PDet:
                     columns=self.pdet_times,
                 )
                 system_pdets.index = int_times
-                for i, planet_num in enumerate(range(1, planets_fitted + 1)):
+                for i, planet_num in enumerate(
+                    tqdm(
+                        range(1, planets_fitted + 1),
+                        desc=f"Probability of detection for {system.star.name}",
+                        position=0,
+                    )
+                ):
                     planet_chains = self.split_chains(chains, planet_num)
                     system_pops.append(
                         PlanetPopulation(
@@ -515,7 +521,7 @@ class PlanetPopulation:
         global pbar
         global counter
         counter = Value("i", 0, lock=True)
-        pbar = TqdmUpTo(total=len(obs_times))
+        pbar = TqdmUpTo(total=len(obs_times), position=1, leave=False)
 
         # Do calculations
         with MapWrapper(pool=workers) as mapper:
