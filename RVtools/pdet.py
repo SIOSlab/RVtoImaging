@@ -41,15 +41,26 @@ class PDet:
         self.pdet_times = Time(np.arange(start_time.jd, end_time.jd, 1), format="jd")
 
         self.pops = {}
+        self.pdets = {}
 
         # Loop through all the systems we want to calculate probability of
         # detection for
         # Check for the chains
         for system_id, system_path in zip(orbitfit.systems_to_fit, orbitfit.paths):
+            system = universe.systems[system_id]
+            if not system.star.name.replace("_", " ") in self.SS.TargetList.Name:
+                logger.warning(
+                    (
+                        f"The {system.star.name} system is not "
+                        "in the PDet EXOSIMS TargetList. Continuing..."
+                    )
+                )
+                continue
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
             pdet_path = Path(system_path, "pdet.nc")
             if chains_path.exists():
+                # TODO MAKE THIS IF NOT EXISTS
                 if not pdet_path.exists():
                     logger.info(
                         (
@@ -102,19 +113,23 @@ class PDet:
                             self.pdet_times.datetime,
                         ],
                     )
-                    self.plot(system, system_pops, self.pdet_times, system_pdets)
-                    breakpoint()
-                    pdet_xr.to_netcdf(pdet_path)
+                    pdet_xr_set = pdet_xr.to_dataset(name="pdet")
+                    # self.plot(system, system_pops, self.pdet_times, system_pdets)
+                    pdet_xr_set.to_netcdf(pdet_path)
                 else:
                     logger.info(
                         f"Probability of detection already exists for"
                         f" {universe.systems[system_id].star.name}"
+                    )
+                    pdet_xr = xr.load_dataset(
+                        pdet_path, decode_cf=True, decode_times=True, engine="netcdf4"
                     )
 
                 # TEMPORARY PLOTTING
                 # self.pops[system_id] = PlanetPopulation(
                 #     planet_chains, system, self.method
                 # )
+                self.pdets[system.star.name] = pdet_xr
             else:
                 logger.warning(f"No chains were created for system {system_id}")
 
@@ -383,6 +398,9 @@ class PlanetPopulation:
         # Planet mass from inclination
         self.Mp = np.abs(self.Msini / np.sin(inc)) * u.M_earth
 
+        # Limit the size to Jupiter mass
+        self.Mp[np.where(self.Mp > 1 * u.M_jupiter)[0]] = 1 * u.M_jupiter
+
         # Use modified FORCASTER model
         self.Rp = self.calc_radius_from_mass(self.Mp)
 
@@ -451,6 +469,12 @@ class PlanetPopulation:
         self.sesinw = chain_samples[f"sesinw{nplan}"].to_numpy()
         self.K = chain_samples[f"k{nplan}"].to_numpy()
         self.T_c = Time(chain_samples[f"tc{nplan}"].to_numpy(), format="jd")
+
+        # For poor fits with high eccentricity the mean/std can result in
+        # negative values. This sets negative values to the mean value instead
+        # of redrawing.
+        if np.any(self.T < 0):
+            self.T[np.where(self.T < 0)] = self.chains_means[f"per{nplan}"] * u.d
 
     def setup_ci(self, chains, nplan):
         quantiles = chains.quantile(0.5)

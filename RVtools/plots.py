@@ -19,6 +19,18 @@ def pop_3d(ax, pop, time_jd, color="r"):
     return ax
 
 
+def init_skyplot(fig, loc):
+    ax = fig.add_subplot(loc, projection="aitoff")
+    plt.grid(True)
+    return ax
+
+
+def sky_plot(ax, coord):
+    gal = coord.galactic
+    ax.scatter(gal.l.wrap_at("180d").radian, gal.b.radian)
+    return ax
+
+
 def image_plane(
     ax, pop, planet, time_jd, return_scatters=False, show_IWA=False, IWA_ang=None
 ):
