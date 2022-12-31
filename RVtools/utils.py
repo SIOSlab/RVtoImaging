@@ -1,3 +1,4 @@
+import itertools
 import json
 import subprocess
 from pathlib import Path
@@ -238,6 +239,49 @@ def prev_best_fit(dir, survey_name):
                 best_candidate["fitting_done"] = other_spec_fitting_done
 
     return best_candidate
+
+
+def replace_EXOSIMS_system(SS, sInd, system):
+    SU = SS.SimulatedUniverse
+    first_ind = np.where(SU.plan2star == sInd)[0][0]
+    last_ind = np.where(SU.plan2star == sInd)[0][-1]
+    atts = ["a", "e", "I", "O", "w", "M0", "Mp", "Rp"]
+    RVtools_atts = ["a", "e", "inc", "W", "w", "M0", "mass", "radius"]
+    for att, rvtools_att in zip(atts, RVtools_atts):
+        # Get the parts of the array before and after the star to be replaced
+        att_arr = getattr(SU, att)
+        first_part = att_arr[:first_ind]
+        last_part = att_arr[last_ind + 1 :]
+        if type(att_arr) == u.Quantity:
+            unit = att_arr.unit
+            setattr(
+                SU,
+                att,
+                list(
+                    itertools.chain(
+                        first_part.value,
+                        system.getpattr(rvtools_att).to(unit).value,
+                        last_part.value,
+                    )
+                )
+                * unit,
+            )
+        else:
+            setattr(
+                SU,
+                att,
+                list(
+                    itertools.chain(first_part, system.getpattr(rvtools_att), last_part)
+                ),
+            )
+
+    # Edit the plan2star
+    first_part = SU.plan2star[:first_ind]
+    last_part = SU.plan2star[last_ind + 1 :]
+    SU.plan2star = list(
+        itertools.chain(first_part, np.ones(len(system.planets)) * sInd, last_part)
+    )
+    return SS
 
 
 def check_orbitfit_dir(dir):

@@ -7,7 +7,8 @@ import astropy.units as u
 import numpy as np
 from astropy.time import Time
 from ortools.linear_solver import pywraplp
-from ortools.sat.python import cp_model
+
+import RVtools.utils as utils
 
 # import RVtools.plots as plots
 from RVtools.builder import BaseBuilder, Director
@@ -38,6 +39,15 @@ from RVtools.builder import BaseBuilder, Director
 #     return data
 
 
+def maxSum(a, n, k):
+    if n <= 0:
+        return 0
+    option = maxSum(a, n - 1, k)
+    if k >= a[n - 1]:
+        option = max(option, a[n - 1] + maxSum(a, n - 2, k - a[n - 1]))
+    return option
+
+
 def create_data_model(coeffs_arr, bounds):
     """Stores the data for the problem."""
     data = {}
@@ -47,6 +57,13 @@ def create_data_model(coeffs_arr, bounds):
     data["num_constraints"] = coeffs_arr.shape[0]
     data["num_vars"] = coeffs_arr.shape[1]
     return data
+
+
+class Observation:
+    def __init__(self, time, star_ind, star_name):
+        self.time = time
+        self.star_ind = star_ind
+        self.star_name = star_name
 
 
 if __name__ == "__main__":
@@ -180,10 +197,12 @@ if __name__ == "__main__":
     koTimes = SS.koTimes
     koMaps = SS.koMaps[mode["syst"]["name"]]
     relevant_stars = list(builder.rvdata.pdet.pdets.keys())
-    n_stars = 2
-    relevant_stars = relevant_stars[:n_stars]
+    # n_stars = 1
+    # relevant_stars = relevant_stars[:n_stars]
+    # relevant_stars = relevant_stars[:7]
+    # relevant_stars = [relevant_stars[6]]
     # sim_length = SS.TimeKeeping.missionLife
-    sim_length = 0.5 * u.yr
+    sim_length = 365 * u.d
     window_length = 0.5 * u.d
 
     # fig, ax = plt.subplots()
@@ -195,60 +214,79 @@ if __name__ == "__main__":
         np.arange(start_time.jd, end_time.jd, window_length.to(u.d).value), format="jd"
     )
     all_coeffs = {}
+    all_orb_sectors = {}
     n_planets = 0
     bounds = []
-    for star in relevant_stars:
+    for i, star in enumerate(relevant_stars):
         star_name = star.replace("_", " ")
         star_ind = np.where(SS.TargetList.Name == star_name)[0][0]
-        # gal_coords = SS.TargetList.coords[star_ind].galactic
-        # plots.sky_plot(ax, gal_coords)
-        # sInds.append(star_ind)
         star_xr = all_pdets[star].pdet
         int_times = star_xr.int_time.values
         obs_times = star_xr.time.values
         star_coeffs = []
+        star_orb_sectors = []
         use_star = False
         for planet in star_xr.planet.values:
-            # Get the probability of detection per integration time
-            pdet_per_int_time = (
-                all_pdets[star].pdet.sel(planet=planet).values.T * 1 / int_times
-            ).T
-            max_val = np.max(pdet_per_int_time)
-            if max_val > 0:
+            # Get the probability of detection at the desired integration times
+            # and observation times
+            planet_pdet = (
+                all_pdets[star]
+                .pdet.sel(planet=planet)
+                .interp(time=obs_windows.datetime, int_time=window_length.to(u.d).value)
+            )
+            # Splitting up the orbit into sections
+            planet_pop = builder.rvdata.pdet.pops[star][planet]
+            pop_T = np.median(planet_pop.T)
+
+            # These orb_sectors separate an orbit into 8 different sectors of
+            # the orbit, which can be used to space out observations for better
+            # orbital coverage
+            orb_sector_times = obs_windows.jd - start_time.jd
+            # orb_sectors = (
+            #     np.arange(
+            #         0,
+            #         max(orb_sector_times) + pop_T.to(u.d).value / 8,
+            #         pop_T.to(u.d).value / 8,
+            #     )
+            #     * u.d
+            # )
+            orb_sectors = (
+                np.arange(
+                    0,
+                    max(orb_sector_times) + pop_T.to(u.d).value / 8,
+                    50,
+                )
+                * u.d
+            )
+            obs_orb_sectors = np.digitize(orb_sector_times, orb_sectors.to(u.d).value)
+            unique_orb_sectors = np.unique(obs_orb_sectors)
+            orb_sector_vals = {}
+
+            # orb_sectors_to_observe is a orb_sector we can observe,
+            # constraints will be added based on how many there are
+            orb_sectors_to_observe = []
+            orb_sector_maxes = []
+            for orb_sector in unique_orb_sectors:
+                orb_sector_inds = np.where(obs_orb_sectors == orb_sector)
+                # orb_sector_vals[orb_sector] = orb_sector_times[orb_sector_inds]
+                orb_sector_vals[orb_sector] = planet_pdet.values[orb_sector_inds]
+                if np.max(orb_sector_vals[orb_sector]) > 0:
+                    # orb_sector_maxes.append(np.max(orb_sector_vals[orb_sector]))
+                    orb_sector_maxes.append(np.median(orb_sector_vals[orb_sector]))
+                orb_sectors_to_observe.append(orb_sector)
+            nonzero_pdets = planet_pdet.values[planet_pdet != 0]
+            median_pdet = np.median(planet_pdet.values)
+            max_pdet = max(sum(orb_sector_maxes[0::2]), sum(orb_sector_maxes[1::2]))
+            bound = np.floor(min(3, max_pdet))
+            if bound > 0.5:
+                print(
+                    f"Adding planet ({pop_T}) around {star_name} with bound of {bound}"
+                )
+                print(f"orb_sector_maxes: {orb_sector_maxes}")
+                # print(f"median_pdet: {median_pdet}")
+                bounds.append(bound)
                 use_star = True
                 n_planets += 1
-                max_inds = np.stack(np.where(pdet_per_int_time == max_val)).T
-                max_times = Time(obs_times[max_inds[:, 1]])
-
-                # Get the windows with maximum pdet/int_time
-                obs_date_diffs = np.diff(Time(obs_times[np.unique(max_inds[:, 1])]).jd)
-                breaks = np.argwhere(obs_date_diffs != 1).flatten()
-
-                pdet_window_starts = np.append(
-                    max_times[0].jd, max_times[breaks + 1].jd
-                )
-                pdet_window_ends = np.append(max_times[breaks].jd, max_times[-1].jd)
-                pdet_windows = Time(
-                    np.stack([pdet_window_starts, pdet_window_ends]).T, format="jd"
-                )
-
-                # This is a very tortured line that converts all windows with high
-                # probability of detection into a single row of booleans that
-                # corresponds to the obs_windows that are used to break up the
-                # availble observation times. A True at index 10 means that the
-                # planet has high probability of detection at the 10th time in
-                # the generated obs_windows.
-                obs_window_pdet = np.array(
-                    np.sum(
-                        [
-                            (obs_windows >= pdet_window[0])
-                            & (obs_windows <= pdet_window[1])
-                            for pdet_window in pdet_windows
-                        ],
-                        axis=0,
-                    ),
-                    dtype=bool,
-                )
 
                 # This interpolates the keepout values to the generated
                 # observation windows
@@ -257,21 +295,12 @@ if __name__ == "__main__":
                     dtype=bool,
                 )
 
-                # Combine the two list of bools and multiply by the pdet values to get
-                # the coefficients for optimization
-                pdet_vals = (
-                    all_pdets[star]
-                    .pdet.sel(planet=planet)
-                    .interp(
-                        int_time=window_length.to(u.d).value, time=obs_windows.datetime
-                    )
-                    .values
-                )
-                coeffs = pdet_vals * (obs_window_ko & obs_window_pdet)
+                coeffs = planet_pdet * obs_window_ko
                 star_coeffs.append(coeffs)
-                bounds.append(2 * max_val)
+                star_orb_sectors.append([orb_sectors_to_observe, obs_orb_sectors])
         if use_star:
             all_coeffs[star_ind] = np.stack(star_coeffs)
+            all_orb_sectors[star_ind] = star_orb_sectors
 
     # Create the giant matrix of coefficients
     n_vars = len(all_coeffs.keys()) * len(obs_windows)
@@ -289,66 +318,108 @@ if __name__ == "__main__":
         current_star = next_star
         sInd_order.append(sInd)
 
-    # Setting up optimization problem
-    # solver = pywraplp.Solver.CreateSolver("SCIP")
-    model = cp_model.CpModel()
-    solver = cp_model.CpSolver()
-    x = {}
-    # ind = 0
-    # for i, sInd in enumerate(all_coeffs.keys()):
-    #     for j, obs_time in enumerate(obs_windows):
-    #         ind += 1
-    #         x[ind] = solver.BoolVar(f"x_{sInd},{obs_time.jd}")
-    # print("Number of variables =", solver.NumVariables())
-
+    solver = pywraplp.Solver.CreateSolver("SCIP")
     data = create_data_model(coeffs_arr, bounds)
-    for j in range(data["num_vars"]):
-        x[j] = model.NewBoolVar("x[%i]" % j)
-    # print("Number of variables =", model.NumVariables())
 
-    # for i in range(data["num_constraints"]):
-    #     constraint = solver.RowConstraint(0, data["bounds"][i], "")
-    #     for j in range(data["num_vars"]):
-    #         try:
-    #             constraint.SetCoefficient(x[j], data["constraint_coeffs"][i][j])
-    #         except:
-    #             breakpoint()
-    for i in range(data["num_constraints"]):
-        # constraint_expr = [
-        #     data["constraint_coeffs"][i][j] * x[j] for j in range(data["num_vars"])
-        # ]
-        # model.Add(sum(constraint_expr) >= data["bounds"][i])
-        # model.Add(cp_model.LinearExpr.ScalProd(x, data['constraint_coeffs'][i]))
-        try:
-            model.Add(
-                cp_model.LinearExpr.WeightedSum(x, data["constraint_coeffs"][i]) >= 0.01
+    # Create the variables, each corresponds to an observation of a star at a
+    # specific time
+    ind = 0
+    x = {}
+    all_star_vars = {}
+    observations = []
+    for i, sInd in enumerate(all_coeffs.keys()):
+        sInd_vars = []
+        for j, obs_time in enumerate(obs_windows):
+            observations.append(
+                Observation(obs_time, sInd, SS.TargetList.Name[sInd].replace(" ", ""))
             )
-        except TypeError:
-            breakpoint()
+            x[ind] = solver.BoolVar(
+                f"x_[{SS.TargetList.Name[sInd].replace(' ', '')}][{obs_time.datetime}]"
+            )
+            sInd_vars.append(x[ind])
+            ind += 1
+        all_star_vars[sInd] = sInd_vars
+    print("Number of variables =", solver.NumVariables())
 
-    # print("Number of constraints =", model.NumConstraints())
+    # Planet probability of detection constraint
+    for i in range(data["num_constraints"]):
+        constraint_expr = [
+            data["constraint_coeffs"][i][j] * x[j] for j in range(data["num_vars"])
+        ]
+        bound = data["bounds"][i]
+        solver.Add(sum(constraint_expr) >= bound)
 
-    objective = model.Objective()
-    # for j in range(data["num_vars"]):
-    #     objective.SetCoefficient(x[j], data["obj_coeffs"][j])
-    # objective.SetMinimization()
+    # Planet sector constraint
+    test_vars = []
+    for i, sInd in enumerate(all_coeffs.keys()):
+        # Get the constraint variables that correspond to an observation of
+        # this planet's star
+        star_vars = all_star_vars[sInd]
+        for pInd in range(len(all_orb_sectors[sInd])):
+            unique_orb_sectors, orb_sector_inds = all_orb_sectors[sInd][pInd]
+            if len(unique_orb_sectors) == 1:
+                # No need to add this constraint
+                continue
+            if len(unique_orb_sectors) >= 5:
+                # If we have 5 orb_sectors we can set a constraint that we want
+                # observations in non-adjacent orb_sectors
+                for j, orb_sector in enumerate(unique_orb_sectors):
+                    orb_sector_vars = np.array(star_vars)[orb_sector_inds == orb_sector]
+                    next_sector_vars = np.array(star_vars)[
+                        orb_sector_inds
+                        == (unique_orb_sectors[(j + 1) % len(unique_orb_sectors)])
+                    ]
+                    solver.Add(
+                        sum(np.concatenate([orb_sector_vars, next_sector_vars])) <= 1
+                    )
+            else:
+                # Otherwise we just want observations in unique orb_sectors
+                for orb_sector in unique_orb_sectors:
+                    orb_sector_vars = np.array(star_vars)[orb_sector_inds == orb_sector]
+                    solver.Add(sum(orb_sector_vars) <= 1)
+
+    # Constraint on one star observation per observation time
+    for i, obs_time in enumerate(obs_windows):
+        vars = [x[j] for j, obs in enumerate(observations) if obs.time == obs_time]
+        solver.Add(sum(vars) <= 1)
+
+    # Goal of minimizing the number of observations necessary
     obj_expr = [data["obj_coeffs"][j] * x[j] for j in range(data["num_vars"])]
-    model.Minimize(model.Sum(obj_expr))
+    solver.Minimize(solver.Sum(obj_expr))
 
-    status = solver.Solve(model)
+    systems = builder.rvdata.universe.systems
+    for i, sInd in enumerate(all_coeffs.keys()):
+        system_name = SS.TargetList.Name[sInd]
+        system = [
+            system
+            for system in systems
+            if system.star.name == system_name.replace(" ", "_")
+        ][0]
+        SS = utils.replace_EXOSIMS_system(SS, sInd, system)
+
+    status = solver.Solve()
 
     if status == pywraplp.Solver.OPTIMAL:
         print("Objective value =", solver.Objective().Value())
         for j in range(data["num_vars"]):
-            print(x[j].name(), " = ", x[j].solution_value())
-        print()
+            if x[j].solution_value() > 0:
+                print(x[j].name(), " = ", x[j].solution_value())
         print("Problem solved in %f milliseconds" % solver.wall_time())
         print("Problem solved in %d iterations" % solver.iterations())
         print("Problem solved in %d branch-and-bound nodes" % solver.nodes())
     else:
         print("The problem does not have an optimal solution.")
-
-    breakpoint()
+    # systems = builder.rvdata.universe.systems
+    # for i, sInd in enumerate(all_coeffs.keys()):
+    #     system_name = SS.TargetList.Name[sInd]
+    #     system = [
+    #         system
+    #         for system in systems
+    #         if system.star.name == system_name.replace(" ", "_")
+    #     ][0]
+    #     if sInd in SS.SimulatedUniverse.plan2star:
+    #         SS = utils.replace_EXOSIMS_system(SS, sInd, system)
+    # breakpoint()
 
     # Need to choose the best pdet/t_int for each observing block
     # data = create_sd_mat(sInds, SS)

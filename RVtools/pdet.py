@@ -59,6 +59,7 @@ class PDet:
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
             pdet_path = Path(system_path, "pdet.nc")
+            pops_path = Path(system_path, "pops.p")
             if chains_path.exists():
                 # TODO MAKE THIS IF NOT EXISTS
                 if not pdet_path.exists():
@@ -104,6 +105,7 @@ class PDet:
                             self.pdet_times, int_times, dMag0s, self.SS, workers=workers
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
+                    self.pops[universe.names[system_id]] = system_pops
                     pdet_xr = xr.DataArray(
                         np.stack([pop.pdets for pop in system_pops]),
                         dims=["planet", "int_time", "time"],
@@ -116,20 +118,25 @@ class PDet:
                     pdet_xr_set = pdet_xr.to_dataset(name="pdet")
                     # self.plot(system, system_pops, self.pdet_times, system_pdets)
                     pdet_xr_set.to_netcdf(pdet_path)
+                    with open(pops_path, "wb") as f:
+                        pickle.dump(system_pops, f)
                 else:
                     logger.info(
                         f"Probability of detection already exists for"
                         f" {universe.systems[system_id].star.name}"
                     )
-                    pdet_xr = xr.load_dataset(
+                    pdet_xr_set = xr.load_dataset(
                         pdet_path, decode_cf=True, decode_times=True, engine="netcdf4"
                     )
+                    with open(pops_path, "rb") as f:
+                        self.pops[universe.names[system_id]] = pickle.load(f)
+                    # self.pops[universe.names[system_id]] = system_pops
 
                 # TEMPORARY PLOTTING
                 # self.pops[system_id] = PlanetPopulation(
                 #     planet_chains, system, self.method
                 # )
-                self.pdets[system.star.name] = pdet_xr
+                self.pdets[system.star.name] = pdet_xr_set
             else:
                 logger.warning(f"No chains were created for system {system_id}")
 
