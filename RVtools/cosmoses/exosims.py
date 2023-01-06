@@ -8,7 +8,6 @@ import pandas as pd
 from astropy.time import Time
 from tqdm import tqdm
 
-import radvel.orbit as rvo
 from EXOSIMS.util.get_module import get_module_from_specs
 from RVtools.cosmos import Planet, Star, System, Universe
 
@@ -193,6 +192,7 @@ class ExosimsPlanet(Planet):
     """
 
     def __init__(self, SU, star, pInd, t0):
+        self.star = star
 
         # Time data
         self._t = t0.decimalyear * u.yr
@@ -209,61 +209,32 @@ class ExosimsPlanet(Planet):
         self._vz = SU.v[pInd][2]
 
         # Assign the planet's keplerian orbital elements
-        self.a = SU.a[pInd]
-        self.e = SU.e[pInd]
-        self.inc = SU.I[pInd]
-        self.W = SU.O[pInd]
-        # self.w = (obj_header["ARGPERI"] * u.deg).to(u.rad)
-        self.w = SU.w[pInd]
-        self.secosw = np.sin(self.e) * np.cos(self.w)
-        self.sesinw = np.sin(self.e) * np.sin(self.w)
+        # self.a = SU.a[pInd]
+        # self.e = SU.e[pInd]
+        # self.inc = SU.I[pInd]
+        # self.W = SU.O[pInd]
+        # self.w = SU.w[pInd]
 
-        # Assign the planet's mass/radius information
-        self.mass = SU.Mp[pInd]
-        self.radius = SU.Rp[pInd]
+        # # Assign the planet's mass/radius information
+        # self.mass = SU.Mp[pInd]
+        # self.radius = SU.Rp[pInd]
+        # # Initial mean anomaly
+        # self.M0 = SU.M0[pInd]
 
-        # Initial mean anomaly
-        self.M0 = SU.M0[pInd]
-
-        # Assign the planet's time-varying mean anomaly, argument of pericenter,
-        # true anomaly, and contrast
-        # self.rep_w = (obj_data[:, 7] * u.deg + 180 * u.deg) % (2 * np.pi * u.rad)
-        # self.M = (obj_data[:, 8] * u.deg + 180 * u.deg) % (2 * np.pi * u.rad)
-        # self.nu = (self.rep_w + self.M) % (
-        #     2 * np.pi * u.rad
-        # )  # true anomaly for circular orbits
-        # self.contrast = obj_data[:, 15]
-
-        # Gravitational parameter
-        self.mu = (const.G * (self.mass + star.mass)).decompose()
-        self.T = (2 * np.pi * np.sqrt(self.a**3 / self.mu)).to(u.d)
-        self.w_p = self.w
-        self.w_s = (self.w + np.pi * u.rad) % (2 * np.pi * u.rad)
-        self.secosw = np.sqrt(self.e) * np.cos(self.w)
-        self.sesinw = np.sqrt(self.e) * np.sin(self.w)
-
-        # Because we have the mean anomaly at an epoch we can calculate the
-        # time of periastron as t0 - T_e where T_e is the time since periastron
-        # passage
-        T_e = (self.T * self.M0 / (2 * np.pi * u.rad)).decompose()
-        self.T_p = self.t0 - T_e
-
-        # Calculate the time of conjunction
-        self.T_c = Time(
-            rvo.timeperi_to_timetrans(
-                self.T_p.jd, self.T.value, self.e, self.w_s.value
-            ),
-            format="jd",
-        )
-        self.K = (
-            (2 * np.pi * const.G / self.T) ** (1 / 3.0)
-            * (self.mass * np.sin(self.inc) / star.mass ** (2 / 3.0))
-            * (1 - self.e**2) ** (-1 / 2)
-        ).decompose()
-
-        # Mean angular motion
-        self.n = (np.sqrt(self.mu / self.a**3)).decompose() * u.rad
-
+        planet_dict = {
+            "t0": t0,
+            "a": SU.a[pInd],
+            "e": SU.e[pInd],
+            "inc": SU.I[pInd],
+            "W": SU.O[pInd],
+            "w": SU.w[pInd],
+            "mass": SU.Mp[pInd],
+            "radius": SU.Rp[pInd],
+            "M0": SU.M0[pInd],
+            "p": 0.2,
+        }
+        Planet.__init__(self, planet_dict)
+        self.solve_dependent_params()
         # Propagation table
         self.vectors = pd.DataFrame(
             {
@@ -276,5 +247,3 @@ class ExosimsPlanet(Planet):
                 "vz": [self._vz.decompose().value],
             }
         )
-
-        self.star = star

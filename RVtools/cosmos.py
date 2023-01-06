@@ -7,6 +7,8 @@ from astropy.time import Time
 from keplertools import fun as kt
 from tqdm import tqdm
 
+import radvel.orbit as rvo
+
 
 class Universe:
     """
@@ -262,8 +264,25 @@ class Planet:
     Class for a planet
     """
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, planet_dict) -> None:
+        for att, value in planet_dict.items():
+            setattr(self, att, value)
+        # self.solve_dependent_params()
+
+    def dump_params(self):
+        params = {
+            "t0": self.t0,
+            "a": self.a,
+            "e": self.e,
+            "mass": self.mass,
+            "radius": self.radius,
+            "inc": self.inc,
+            "W": self.W,
+            "w": self.w,
+            "M0": self.M0,
+            "p": self.p,
+        }
+        return params
 
     def calc_vectors(self, t, return_r=True, return_v=False):
         """
@@ -408,6 +427,32 @@ class Planet:
             2 * np.pi * u.rad
         )
         return M
+
+    def solve_dependent_params(self):
+        self.mu = (const.G * (self.mass + self.star.mass)).decompose()
+        self.T = (2 * np.pi * np.sqrt(self.a**3 / self.mu)).to(u.d)
+        self.w_p = self.w
+        self.w_s = (self.w + np.pi * u.rad) % (2 * np.pi * u.rad)
+        self.secosw = np.sqrt(self.e) * np.cos(self.w)
+        self.sesinw = np.sqrt(self.e) * np.sin(self.w)
+        T_e = (self.T * self.M0 / (2 * np.pi * u.rad)).decompose()
+        self.T_p = self.t0 - T_e
+
+        # Calculate the time of conjunction
+        self.T_c = Time(
+            rvo.timeperi_to_timetrans(
+                self.T_p.jd, self.T.value, self.e, self.w_s.value
+            ),
+            format="jd",
+        )
+        self.K = (
+            (2 * np.pi * const.G / self.T) ** (1 / 3.0)
+            * (self.mass * np.sin(self.inc) / self.star.mass ** (2 / 3.0))
+            * (1 - self.e**2) ** (-1 / 2)
+        ).decompose()
+
+        # Mean angular motion
+        self.n = (np.sqrt(self.mu / self.a**3)).decompose() * u.rad
 
     def classify_planet(self):
         """

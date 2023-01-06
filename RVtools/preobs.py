@@ -149,6 +149,8 @@ class PreObs:
             sorted_dists = dists[dists[:, 0].argsort()]
             sorted_ids = sorted_dists[: self.n_systems_to_observe, 1]
             systems_to_observe = [int(syst_id) for syst_id in sorted_ids]
+        else:
+            systems_to_observe = [i for i in range(self.n_systems_to_observe + 1)]
         return systems_to_observe
 
     def get_propagation_times(self):
@@ -307,7 +309,7 @@ class Instrument:
         # then it's considered a bad weather night and no observations
         # will be taken
         bad_weather_nights = (
-            np.array([random() for n in range(int(nights_available))])
+            np.array([random() for _ in range(int(nights_available))])
             < self.bad_weather_prob
         )
 

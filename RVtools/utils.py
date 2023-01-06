@@ -1,3 +1,4 @@
+import copy
 import itertools
 import json
 import subprocess
@@ -104,11 +105,11 @@ def mean_anom(obj, times):
 
 def calc_position_vectors(obj, times):
     orbElem = (
-        obj.a.decompose().value,
-        obj.e,
-        obj.W.to(u.rad).value,
-        obj.inc.to(u.rad).value,
-        obj.w.to(u.rad).value,
+        np.array(obj.a.decompose().value, ndmin=1),
+        np.array(obj.e, ndmin=1),
+        np.array(obj.W.to(u.rad).value, ndmin=1),
+        np.array(obj.inc.to(u.rad).value, ndmin=1),
+        np.array(obj.w.to(u.rad).value, ndmin=1),
     )
     x, y, z, vx, vy, vz = [], [], [], [], [], []
     for t in times:
@@ -125,6 +126,42 @@ def calc_position_vectors(obj, times):
     r = {"x": x, "y": y, "z": z, "vx": vx, "vy": vy, "vz": vz, "t": times.jd}
     full_vector = pd.DataFrame(r)
     return full_vector
+
+
+def prop_for_imaging(obj, t):
+    # Calculates the working angle and deltaMag
+    a, e, I, w = obj.a, obj.e, obj.inc, obj.w
+
+    M = mean_anom(obj, t)
+    E = kt.eccanom(M.to(u.rad).value, obj.e)
+    nu = kt.trueanom(E, e) * u.rad
+    theta = nu + w
+
+    r = a * (1 - e**2) / (1 + e * np.cos(nu))
+    s = (r / 4) * np.sqrt(
+        4 * np.cos(2 * I)
+        + 4 * np.cos(2 * theta)
+        - 2 * np.cos(2 * I - 2 * theta)
+        - 2 * np.cos(2 * I + 2 * theta)
+        + 12
+    )
+    beta = np.arccos(-np.sin(I) * np.sin(theta))
+    # For gas giants
+    # p_phi = self.calc_p_phi(beta, photdict, bandinfo)
+    # For terrestrial planets
+    phi = lambert_func(beta)
+    # p_phi = self.p * phi
+    p_phi = obj.p * phi
+
+    WA = np.arctan(s / obj.dist).decompose()
+    dMag = -2.5 * np.log10(p_phi * ((obj.radius / r).decompose()) ** 2).value
+    return WA, dMag
+
+
+def lambert_func(beta):
+    return (np.sin(beta) * u.rad + (np.pi * u.rad - beta) * np.cos(beta)) / (
+        np.pi * u.rad
+    )
 
 
 def update(path, spec):
@@ -243,16 +280,60 @@ def prev_best_fit(dir, survey_name):
 
 def replace_EXOSIMS_system(SS, sInd, system):
     SU = SS.SimulatedUniverse
-    first_ind = np.where(SU.plan2star == sInd)[0][0]
-    last_ind = np.where(SU.plan2star == sInd)[0][-1]
-    atts = ["a", "e", "I", "O", "w", "M0", "Mp", "Rp"]
-    RVtools_atts = ["a", "e", "inc", "W", "w", "M0", "mass", "radius"]
+    star_planets = np.where(SU.plan2star == sInd)[0]
+    print(
+        (
+            f"Adding {len(system.planets)} to {system.star.name}, sInd {sInd}."
+            f"\n{system.getpattr('a')}"
+        )
+    )
+    if len(star_planets) > 0:
+        first_ind = star_planets[0]
+        last_ind = star_planets[-1]
+    else:
+        first_ind = np.where((SU.plan2star - sInd) > 0)[0][0]
+        last_ind = first_ind - 1
+    # else:
+    #     breakpoint()
+    #     # Don't want to add planets past the typical occurrence rate so if
+    #     # there aren't any planets around a system find the closest sInd with
+    #     # the same number of planets
+    #     counts, bins = np.histogram(
+    #         SU.plan2star, bins=np.arange(SU.plan2star[0], SU.plan2star[-1])
+    #     )
+    #     matching_inds = bins[np.where(counts == len(system.planets))]
+    #     replacement_ind = matching_inds[np.argsort(abs(matching_inds - sInd))[0]]
+    #     if len(system.planets) == 1:
+    #         first_ind = replacement_ind
+    #         last_ind = replacement_ind
+    #     else:
+    #         inds = np.where(SU.plan2star == replacement_ind)[0]
+    #         first_ind = inds[0]
+    #         last_ind = inds[-1]
+    atts = ["a", "e", "I", "O", "w", "M0", "Mp", "Rp", "p"]
+    RVtools_atts = ["a", "e", "inc", "W", "w", "M0", "mass", "radius", "p"]
     for att, rvtools_att in zip(atts, RVtools_atts):
         # Get the parts of the array before and after the star to be replaced
         att_arr = getattr(SU, att)
         first_part = att_arr[:first_ind]
         last_part = att_arr[last_ind + 1 :]
-        if type(att_arr) == u.Quantity:
+        if att == "p":
+            setattr(
+                SU,
+                att,
+                np.array(
+                    list(
+                        itertools.chain(
+                            first_part,
+                            SU.PlanetPopulation.get_p_from_Rp(
+                                system.getpattr("radius")
+                            ),
+                            last_part,
+                        )
+                    ),
+                ),
+            )
+        elif type(att_arr) == u.Quantity:
             unit = att_arr.unit
             setattr(
                 SU,
@@ -270,16 +351,23 @@ def replace_EXOSIMS_system(SS, sInd, system):
             setattr(
                 SU,
                 att,
-                list(
-                    itertools.chain(first_part, system.getpattr(rvtools_att), last_part)
+                np.array(
+                    list(
+                        itertools.chain(
+                            first_part, system.getpattr(rvtools_att), last_part
+                        )
+                    ),
                 ),
             )
 
     # Edit the plan2star
     first_part = SU.plan2star[:first_ind]
     last_part = SU.plan2star[last_ind + 1 :]
-    SU.plan2star = list(
-        itertools.chain(first_part, np.ones(len(system.planets)) * sInd, last_part)
+    SU.plan2star = np.array(
+        list(
+            itertools.chain(first_part, np.ones(len(system.planets)) * sInd, last_part)
+        ),
+        dtype=int,
     )
     return SS
 
@@ -325,5 +413,141 @@ def check_orbitfit_dir(dir):
     return has_fit, prev_max, fitting_done, search_file
 
 
-def dim_dMag_curve():
-    pass
+def count_DRM_det(DRM, status=None):
+    """Build lists of detections in ensemble results."""
+
+    nobs = len(DRM)
+    ndet = 0
+    plan_inds = np.array([], dtype=int)
+    for obs in range(nobs):
+        if "det_status" in DRM[obs].keys():
+            det_status = DRM[obs]["det_status"]
+            if status is None:  # unique detections
+                mask = [j for j, k in enumerate([x == 1 for x in det_status]) if k]
+                plan_inds = np.append(plan_inds, np.array(DRM[obs]["plan_inds"])[mask])
+                ndet = np.unique(plan_inds).size
+            else:
+                ndet += sum([int(x == status) for x in det_status])
+    return ndet
+
+
+def count_DRM_char(DRM, status=None):
+    """Build lists of characterizations in ensemble results.
+
+    Args:
+        drms:
+            all the drms from the run_ensemble
+        status (integer)
+            Characterization status:
+            1:full spectrum, -1:partial spectrum, 0:not characterized
+
+    Returns:
+        char (list):
+            List of characterization results, depending on the characterization status
+
+    """
+    nobs = len(DRM)
+    nchar = 0
+    for obs in range(nobs):
+        if "char_status" in DRM[obs].keys():
+            # nchar += len([x for x in DRM[obs]['char_status'] if x == status])
+            for planet_char in DRM[obs]["char_status"]:
+                if status == "any":
+                    nchar += 1
+                else:
+                    nchar += planet_char == status
+    return nchar
+
+
+def compare_schedule(builder):
+    rvdata = builder.rvdata
+    stars = list(
+        [obs.star_name.replace("P", "P ") for obs in rvdata.scheduler.schedule]
+    )
+    SS = rvdata.pdet.SS
+    # baseSU = rvdata.universe.SU
+    # system_dump = baseSU.dump_systems()
+    # SS.SimulatedUniverse.load_systems(system_dump)
+    # prefilter_SS = copy.deepcopy(SS)
+    # prefilter_sInds = [np.argwhere(SS.TargetList.Name == star)[0][0] for star in stars]
+    # pInds = np.sort(
+    #     np.concatenate(
+    #         [
+    #             np.where(SS.SimulatedUniverse.plan2star == x)[0]
+    #             for x in np.arange(SS.TargetList.nStars)
+    #         ]
+    #     )
+    # )
+    # SS.SimulatedUniverse.revise_planets_list(pInds)
+    # SS.TargetList.completeness_filter_original()
+    SS.run_sim()
+    original_DRM = copy.deepcopy(SS.DRM)
+    SS.reset_sim(genNewPlanets=False)
+    # # Set up sim with the optimization problem time windows
+    # SS.TargetList.completeness_filter_save(prefilter_sInds)
+    # forced_sInds = np.unique(
+    #     [np.argwhere(SS.TargetList.Name == star)[0][0] for star in stars]
+    # )
+    # breakpoint()
+    # SS.SimulatedUniverse.revise_stars_list(new_sInds)
+    new_sInds = [np.argwhere(SS.TargetList.Name == star)[0][0] for star in stars]
+    # breakpoint()
+    # pInds = np.sort(
+    #     np.concatenate(
+    #         [
+    #             np.where(SS.SimulatedUniverse.plan2star == x)[0]
+    #             for x in np.arange(SS.TargetList.nStars)
+    #         ]
+    #     )
+    # )
+    # SS.SimulatedUniverse.revise_planets_list(pInds)
+    # for i, ind in enumerate(sInds):
+    #     SS.SimulatedUniverse.plan2star[
+    #         np.where(SS.SimulatedUniverse.plan2star == ind)[0]
+    #     ] = i
+    # breakpoint()
+    systems = rvdata.universe.systems
+    systems_to_use = []
+    for sInd in new_sInds:
+        system_name = SS.TargetList.Name[sInd]
+        system = [
+            system
+            for system in systems
+            if system.star.name == system_name.replace(" ", "_")
+        ][0]
+        # SS = replace_EXOSIMS_system(SS, sInd, system)
+        systems_to_use.append(system)
+    # # SS.TargetList.sInds_to_save = list(rvdata.scheduler.all_coeffs.keys())
+    # SS.SimulatedUniverse.init_systems()
+    # SS.SimulatedUniverse.nPlans = len(SS.SimulatedUniverse.plan2star)
+    # allModes = SS.OpticalSystem.observingModes
+    # num_char_modes = len(
+    #     list(filter(lambda mode: "spec" in mode["inst"]["name"], allModes))
+    # )
+    # SS.fullSpectra = np.zeros((num_char_modes, SS.SimulatedUniverse.nPlans), dtype=int)
+    # SS.partialSpectra = np.zeros(
+    #     (num_char_modes, SS.SimulatedUniverse.nPlans), dtype=int
+    # )
+    # if SS.SimulatedUniverse.earthPF:
+    #     SS.SimulatedUniverse.phiIndex = (
+    #         np.ones(SS.SimulatedUniverse.nPlans, dtype=int) * 2
+    #     )  # Used to switch select specific phase function for each planet
+    # else:
+    #     SS.SimulatedUniverse.phiIndex = np.asarray([])
+
+    SS.instantiate_forced_observations(rvdata.scheduler.schedule, systems_to_use)
+    SS.run_sim()
+
+    results = {}
+    results["raw_dets"] = count_DRM_det(original_DRM)
+    print(f"\n\nraw detections: {results['raw_dets']}")
+    results["raw_chars"] = count_DRM_char(original_DRM)
+    print(f"raw characterizations: {results['raw_chars']}")
+    results["scheduled_dets"] = count_DRM_det(SS.DRM)
+    print(f"scheduled detections: {results['scheduled_dets']}\n\n")
+
+    # results["scheduled_chars"] = count_DRM_char(SS.DRM)
+    # print(f"scheduled characterizations: {results['scheduled_chars']}")
+    # raw_char = count_DRM_char(original_DRM)
+    # percursor_char = count_DRM_char(SS.DRM)
+    return results

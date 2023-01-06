@@ -55,7 +55,7 @@ class PDet:
                         "in the PDet EXOSIMS TargetList. Continuing..."
                     )
                 )
-                continue
+                # continue
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
             pdet_path = Path(system_path, "pdet.nc")
@@ -156,6 +156,10 @@ class PDet:
         max_time = OS.intCutoff
 
         target_sInd = np.where(TL.Name == system.star.name.replace("_", " "))[0][0]
+        # except:
+        #     target_sInd = np.where(
+        #         SS.StarCatalog.Name == system.star.name.replace("_", " ")
+        #     )[0][0]
         int_times = (
             np.logspace(
                 0,
@@ -195,7 +199,7 @@ class PDet:
         p_chains = chains.loc[:, df_cols]
         return p_chains
 
-    def plot(self, system, system_pops, times, system_pdets):
+    def plot(self, system, system_pops, times):
         mpl.use("Qt5Agg")
         cmap = plt.get_cmap("viridis")
         cvals = np.linspace(0, 1, len(system_pops))
@@ -224,7 +228,6 @@ class PDet:
                 color_mapping[pop.closest_planet_ind] = color
                 current_cmap_ind += 1
                 ax = RVtools.plots.pop_3d(ax, pop, t.jd, color)
-            breakpoint()
             pdet_ax.plot(times.decimalyear[:ind], pop.pdets[:ind], color=color)
             # Add the real planets
             for i, planet in enumerate(system.planets):
@@ -317,7 +320,7 @@ class PlanetPopulation:
         n_fits,
         nplan,
         fixed_inc=None,
-        fixed_p=0.36,
+        fixed_p=0.2,
         fixed_f_sed=None,
     ):
         """

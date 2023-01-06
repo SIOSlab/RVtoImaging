@@ -2,9 +2,11 @@ astropy
 EXOSIMS
 keplertools
 matplotlib
+netCDF4
 numpy
 rebound
 pandas
 pre-commit
 scipy
 tqdm
+xarray

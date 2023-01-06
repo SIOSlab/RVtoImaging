@@ -14,6 +14,7 @@ from RVtools.logger import logger
 from RVtools.orbitfit import OrbitFit
 from RVtools.pdet import PDet
 from RVtools.preobs import PreObs
+from RVtools.scheduler import Scheduler
 
 
 class Builder(ABC):
@@ -56,68 +57,7 @@ class BaseBuilder(Builder):
         self.reset()
 
     def reset(self):
-        # self.library = Library(self.cache_dir)
         self.rvdata = RVData(self.cache_dir, self.workers)
-        # self.rvdata.workers = self.workers
-        # self.cache_universe = False
-        # self.cache_preobs = False
-        # self.cache_orbitfit = False
-        # self.cache_pdet = False
-
-    # @property
-    # def run_title(self):
-    #     return self._run_title
-
-    # @run_title.setter
-    # def run_title(self, run_title):
-    #     self._run_title = run_title
-    #     self.rvdata.run_title = run_title
-    #     # self.rvdata.cache_setup()
-
-    # @property
-    # def workers(self):
-    #     return self._workers
-
-    # @workers.setter
-    # def workers(self, workers):
-    #     self._workers = workers
-    #     self.rvdata.workers = workers
-
-    # @property
-    # def cache_universe(self):
-    #     return self._cache_universe
-
-    # @cache_universe.setter
-    # def cache_universe(self, val):
-    #     self._cache_universe = val
-    #     self.rvdata.cache_universe = val
-
-    # @property
-    # def cache_preobs(self):
-    #     return self._cache_preobs
-
-    # @cache_preobs.setter
-    # def cache_preobs(self, val):
-    #     self._cache_preobs = val
-    #     self.rvdata.cache_preobs = val
-
-    # @property
-    # def cache_orbitfit(self):
-    #     return self._cache_orbitfit
-
-    # @cache_orbitfit.setter
-    # def cache_orbitfit(self, val):
-    #     self._cache_orbitfit = val
-    #     self.rvdata.cache_orbitfit = val
-
-    # @property
-    # def cache_pdet(self):
-    #     return self._cache_pdet
-
-    # @cache_pdet.setter
-    # def cache_pdet(self, val):
-    #     self._cache_pdet = val
-    #     self.rvdata.cache_pdet = val
 
     @property
     def precursor_data(self) -> RVData:
@@ -153,6 +93,9 @@ class BaseBuilder(Builder):
 
     def probability_of_detection(self):
         self.rvdata.calc_pdet(self.pdet_params)
+
+    def create_schedule(self):
+        self.rvdata.run_scheduler(self.schedule_params)
 
 
 class RVData:
@@ -295,45 +238,6 @@ class RVData:
             self, "universe_path"
         ), "Precursor observations must have a set universe for caching"
 
-        # Get all the specifications
-        # surveys = preobs_params["surveys"]
-        # preobs_spec = {}
-        # for inst in insts:
-        #     # Creating single dictionaries for each instrument that only have strings
-        #     # so that they play nicely with json formatting
-        #     str_params = {}
-        #     inst_params = base_params.copy()
-        #     inst_params.update(inst)
-        #     for key in inst_params.keys():
-        #         value = inst_params[key]
-        #         if type(value) == u.Quantity:
-        #             str_params[key] = value.decompose().value
-        #         elif type(value) == astropy.time.Time:
-        #             str_params[key] = value.decimalyear
-        #         else:
-        #             str_params[key] = value
-        #     # Sort
-        #     str_params = {key: str_params[key] for key in sorted(str_params)}
-        #     preobs_spec[inst["name"]] = str_params
-
-        # syst_ids = preobs_params["systems_to_observe"]
-        # system_names = []
-        # for system_id in syst_ids:
-        #     # Get the system's name from the universe
-        #     system_names.append(self.universe.names[system_id])
-
-        # preobs_spec["stars"] = system_names
-        # preobs_spec = {key: preobs_spec[key] for key in sorted(preobs_spec)}
-        # # Create hash from the parameters
-        # self.preobs_hash = hashlib.sha1(str(preobs_spec).encode("UTF-8")).hexdigest()[
-        #     :8
-        # ]
-
-        # Caching information
-        # self.preobs_dir = Path(self.universe_dir, f"preobs_{self.preobs_hash}")
-        # self.preobs_dir.mkdir(exist_ok=True)
-        # self.preobs_path = Path(self.preobs_dir, "preobs.p")
-
         base_params = preobs_params["base_params"]
         self.surveys = []
         for survey in preobs_params["surveys"]:
@@ -390,24 +294,6 @@ class RVData:
                 logger.info(f"Loaded {survey_name} survey from {survey_file}")
 
             self.surveys.append(survey)
-        # # Load or create precursor observations
-        # if self.preobs_path.exists():
-        #     # Load
-        #     with open(self.preobs_path, "rb") as f:
-        #         self.preobs = dill.load(f)
-        #     logger.info(f"Loaded precursor observations from {self.preobs_path}")
-        # else:
-        #     # Create
-        #     self.preobs = PreObs(preobs_params, self.universe)
-
-        #     # Cache
-        #     with open(self.preobs_path, "wb") as f:
-        #         dill.dump(self.preobs, f)
-
-        #     logger.info(f"Created precursor observations, saved to {self.preobs_path}")
-
-        # Update library
-        # utils.update(self.preobs_dir, preobs_spec)
 
     def orbit_fitting(self, orbitfit_params):
         orbitfit_params["universe_dir"] = self.universe_dir
@@ -416,7 +302,34 @@ class RVData:
         )
 
     def calc_pdet(self, pdet_params):
+        with open(Path(pdet_params["script"])) as f:
+            exosims_script = json.loads(f.read())
+        if "forced_seed" in pdet_params.keys():
+            # Make a copy of the exosims json and save it to the cache, then
+            # delete after
+            original_script = pdet_params["script"]
+            exosims_script["seed"] = pdet_params["forced_seed"]
+            tmp_file = Path(
+                self.cache_dir,
+                (
+                    f"{pdet_params['script'].split('.')[0]}"
+                    f"_seed_{exosims_script['seed']}.json"
+                ),
+            )
+            with open(tmp_file, "w") as f:
+                json.dump(exosims_script, f)
+            delete_tmp = True
+            pdet_params["script"] = str(tmp_file)
+        else:
+            delete_tmp = False
         self.pdet = PDet(pdet_params, self.orbitfit, self.universe, self.workers)
+        if delete_tmp:
+            tmp_file.unlink()
+        if "forced_seed" in pdet_params.keys():
+            pdet_params["script"] = original_script
+
+    def run_scheduler(self, schedule_params):
+        self.scheduler = Scheduler(schedule_params, self.pdet, self.universe_dir)
 
     def list_parts(self) -> None:
         print(f"RVData parts: {', '.join(self.parts)}", end="")
@@ -462,6 +375,7 @@ class Director:
     def run_seeds(self, seeds):
         for seed in seeds:
             self.builder.universe_params["forced_seed"] = int(seed)
+            self.builder.pdet_params["forced_seed"] = int(seed)
             self.build_full_info()
 
     def build_full_info(self) -> None:
@@ -469,6 +383,7 @@ class Director:
         self.builder.simulate_rv_observations()
         self.builder.orbit_fitting()
         self.builder.probability_of_detection()
+        self.builder.create_schedule()
 
 
 if __name__ == "__main__":
