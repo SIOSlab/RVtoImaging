@@ -445,13 +445,22 @@ class Instrument:
             obs_df = pd.DataFrame(stacked_arrays, columns=columns)
 
             # Simplify datatypes
+            # dtypes = {
+            #     "time": np.float,
+            #     "mnvel": np.float,
+            #     "errvel": np.float,
+            #     "tel": str,
+            #     "truevel": np.float,
+            #     "t_year": np.float,
+            #     "system_id": int,
+            # }
             dtypes = {
-                "time": np.float,
-                "mnvel": np.float,
-                "errvel": np.float,
+                "time": float,
+                "mnvel": float,
+                "errvel": float,
                 "tel": str,
-                "truevel": np.float,
-                "t_year": np.float,
+                "truevel": float,
+                "t_year": float,
                 "system_id": int,
             }
             obs_df = obs_df.astype(dtypes)

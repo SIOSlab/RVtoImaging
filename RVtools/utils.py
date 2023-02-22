@@ -128,6 +128,31 @@ def calc_position_vectors(obj, times):
     return full_vector
 
 
+def calc_position_vectors2(obj, times):
+    orbElem = (
+        np.array(obj.a.decompose().value, ndmin=1),
+        np.array(obj.e, ndmin=1),
+        np.array(obj.W.to(u.rad).value, ndmin=1),
+        np.array(obj.inc.to(u.rad).value, ndmin=1),
+        np.array(obj.w.to(u.rad).value, ndmin=1),
+    )
+    x, y, z, vx, vy, vz = [], [], [], [], [], []
+    for t in times:
+        M = mean_anom(obj, t)
+        E, _, _ = kt.eccanom_orvara(np.array([M.to(u.rad).value]), obj.e)
+        mu = obj.mu.decompose().value
+        r, v = kt.orbElem2vec(E, mu, orbElem)
+        x.append(r[0])
+        y.append(r[1])
+        z.append(r[2])
+        vx.append(v[0])
+        vy.append(v[1])
+        vz.append(v[2])
+    r = {"x": x, "y": y, "z": z, "vx": vx, "vy": vy, "vz": vz, "t": times.jd}
+    full_vector = pd.DataFrame(r)
+    return full_vector
+
+
 def prop_for_imaging(obj, t):
     # Calculates the working angle and deltaMag
     a, e, I, w = obj.a, obj.e, obj.inc, obj.w

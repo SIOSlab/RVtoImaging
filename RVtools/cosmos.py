@@ -89,17 +89,40 @@ class System:
         # Get unique time values, multiple instruments can be scheduled to
         # observe at the same time
         times = Time(np.unique(times.jd), format="jd")
-        self.rv_vals = np.zeros(len(times)) * u.m / u.s
+        # self.rv_vals = np.zeros(len(times)) * u.m / u.s
+        # for planet in self.planets:
+        #     M = planet.mean_anom(times)
+        #     E = kt.eccanom(M, planet.e)
+        #     nu = kt.trueanom(E, planet.e) * u.rad
+        #     planet.rv_times = times
+        #     planet.nu = nu
+        #     planet.rv_vals = -planet.K * (
+        #         np.cos(planet.w + nu) + planet.e * np.cos(planet.w)
+        #     )
+        #     self.rv_vals += planet.rv_vals
+
+        syst_M = []
         for planet in self.planets:
-            M = planet.mean_anom(times)
-            E = kt.eccanom(M, planet.e)
-            nu = kt.trueanom(E, planet.e) * u.rad
-            planet.rv_times = times
-            planet.nu = nu
-            planet.rv_vals = -planet.K * (
-                np.cos(planet.w + nu) + planet.e * np.cos(planet.w)
+            syst_M.append(planet.mean_anom(times))
+        Marr = np.stack(syst_M).value
+        self.rv_vals = (
+            -kt.calc_RV_from_M(
+                Marr,
+                self.getpattr("e"),
+                self.getpattr("w").to(u.rad).value,
+                self.getpattr("K").value,
             )
-            self.rv_vals += planet.rv_vals
+            * u.m
+            / u.s
+        )
+        # E = kt.eccanom(M, planet.e)
+        # nu = kt.trueanom(E, planet.e) * u.rad
+        # planet.rv_times = times
+        # planet.nu = nu
+        # planet.rv_vals = -planet.K * (
+        #     np.cos(planet.w + nu) + planet.e * np.cos(planet.w)
+        # )
+        # self.rv_vals += planet.rv_vals
 
         # Storing as dataframe too
         rv_df = pd.DataFrame(
