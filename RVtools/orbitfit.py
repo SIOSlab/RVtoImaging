@@ -48,15 +48,18 @@ class OrbitFit:
                 system = universe.systems[system_id]
                 star_name = system.star.name
                 # Determine the maximum number of planets that can be detected
-                k_vals = system.getpattr("K")
+                # k_vals = system.getpattr("K")
 
                 # Assuming that the semi-amplitude has to be 10 times larger than the
                 # best instrument's precision and max period is 75 years
-                k_cutoff = 3 * min([inst.precision for inst in survey.instruments])
-                feasible_max = sum(
-                    (k_vals > k_cutoff) & (system.getpattr("T") < 75 * u.yr)
-                )
-                max_planets = min([feasible_max, self.max_planets])
+                # k_cutoff = 3 * min([inst.precision for inst in survey.instruments])
+                # feasible_max = sum(
+                #     (k_vals > k_cutoff) & (system.getpattr("T") < 75 * u.yr)
+                # )
+                # UNCOMMENT THIS AFTER CURRENT RUN
+                # max_planets = min([feasible_max, self.max_planets])
+                max_planets = self.max_planets
+
                 # Handle caching of fits, structure is that each system
                 system_path = f"{self.universe_dir}/{star_name}"
                 # Directory to save fit based on max number of planets ("depth")
