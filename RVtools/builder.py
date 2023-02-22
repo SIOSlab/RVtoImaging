@@ -375,8 +375,11 @@ class Director:
     def run_seeds(self, seeds):
         for seed in seeds:
             self.builder.universe_params["forced_seed"] = int(seed)
-            self.builder.pdet_params["forced_seed"] = int(seed)
-            self.build_full_info()
+            if hasattr(builder, "pdet_params"):
+                self.builder.pdet_params["forced_seed"] = int(seed)
+                self.build_full_info()
+            else:
+                self.build_orbit_fits()
 
     def build_full_info(self) -> None:
         self.builder.create_universe()
