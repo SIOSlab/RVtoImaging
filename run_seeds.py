@@ -35,51 +35,30 @@ if __name__ == "__main__":
     ######################################################################
     # Create base instrument parameters
     mission_start = Time(2043, format="decimalyear")
-
-    # Create instrument bases
     rv100_25 = {
         "name": "1 m/s",
         "precision": 1 * u.m / u.s,
         "start_time": mission_start - 20 * u.yr,
-    }
-
-    rv40_15 = {
-        "name": "40 cm/s",
-        "precision": 0.4 * u.m / u.s,
-        "start_time": mission_start - 15 * u.yr,
-    }
-
-    rv10_15 = {
-        "name": "10 cm/s",
-        "precision": 0.1 * u.m / u.s,
-        "start_time": mission_start - 15 * u.yr,
+        "end_time": mission_start - 10 * u.yr,
     }
 
     rv03_15 = {
         "name": "3 cm/s",
         "precision": 0.03 * u.m / u.s,
-        "start_time": mission_start - 15 * u.yr,
+        "start_time": mission_start - 10 * u.yr,
     }
-
-    survey2 = {
-        "fit_order": 1,
-        "instruments": [rv100_25, rv40_15, rv10_15],
-    }
-    survey3 = {
+    survey = {
         "fit_order": 2,
-        "instruments": [rv100_25, rv40_15, rv03_15],
+        "instruments": [rv100_25, rv03_15],
     }
-    surveys = [survey3]
-
-    # Save parameters to the builder
+    surveys = [survey]
     base_params = {
         "observation_scheme": "survey",
-        "observations_per_night": 20,
-        "bad_weather_prob": 0.5,
+        "observations_per_night": 10,
+        "bad_weather_prob": 0.35,
         "end_time": mission_start,
     }
-    nsystems = 125
-    systems = np.arange(nsystems)
+    nsystems = 100
     builder.preobs_params = {
         "base_params": base_params,
         "surveys": surveys,
@@ -92,7 +71,7 @@ if __name__ == "__main__":
     ######################################################################
     builder.orbitfit_params = {
         "fitting_method": "rvsearch",
-        "max_planets": 3,
+        "max_planets": 5,
     }
 
     # RUN THE SEEDS
