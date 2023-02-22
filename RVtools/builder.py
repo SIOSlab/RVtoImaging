@@ -375,7 +375,7 @@ class Director:
     def run_seeds(self, seeds):
         for seed in seeds:
             self.builder.universe_params["forced_seed"] = int(seed)
-            if hasattr(builder, "pdet_params"):
+            if hasattr(self.builder, "pdet_params"):
                 self.builder.pdet_params["forced_seed"] = int(seed)
                 self.build_full_info()
             else:
