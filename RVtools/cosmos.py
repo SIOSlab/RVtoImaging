@@ -1,3 +1,5 @@
+import copy
+
 import astropy.constants as const
 import astropy.units as u
 import numpy as np
@@ -8,6 +10,7 @@ from keplertools import fun as kt
 from tqdm import tqdm
 
 import radvel.orbit as rvo
+import radvel.utils as rvu
 
 
 class Universe:
@@ -562,3 +565,116 @@ class Star:
 
     def __init__(self):
         pass
+
+
+class FitSystem(System):
+    def __init__(self, search_obj, true_system):
+        """
+        This function creates a rvtools system object with the planets found
+        during the fitting process. It also calculates the planet that the
+        fit is most likely describing.
+        """
+        search_params = search_obj.post.params
+        self.star = copy.deepcopy(true_system.star)
+        self.planets = []
+        for nplan in range(1, search_obj.num_planets + 1):
+            # Create dictionary to initialize planet with
+            plan_dict = {}
+            plan_dict["T"] = search_params[f"per{nplan}"].value * u.d
+            plan_dict["T_c"] = Time(search_params[f"tc{nplan}"].value, format="jd")
+            plan_dict["secosw"] = search_params[f"secosw{nplan}"].value
+            plan_dict["sesinw"] = search_params[f"sesinw{nplan}"].value
+            plan_dict["K"] = search_params[f"k{nplan}"].value * u.m / u.s
+
+            # Initialize the planet object
+            planet = FitPlanet(plan_dict, true_system)
+            self.planets.append(planet)
+        self.true_system = true_system
+
+    def get_p_df(self):
+        patts = [
+            "K",
+            "T",
+            "secosw",
+            "sesinw",
+            "T_c",
+            "a",
+            "e",
+            "w",
+            "M0",
+            "t0",
+            "msini",
+            "best_match",
+            "best_rms",
+        ]
+        p_df = pd.DataFrame()
+        for att in patts:
+            pattr = self.getpattr(att)
+            if type(pattr) == u.Quantity:
+                p_df[att] = pattr.value
+            else:
+                p_df[att] = pattr
+
+        return p_df
+
+
+class FitPlanet(Planet):
+    def __init__(self, planet_dict, true_system):
+        """
+        filling in parameters that are not found in the fitting process.
+        Assumes that the planet_dict includes
+        T, Tc, secosw, sesinw, K
+        basis.
+        """
+        self.star = true_system.star
+        for att, value in planet_dict.items():
+            setattr(self, att, value)
+        self.e = self.secosw**2 + self.sesinw**2
+        self.w_s = np.arctan2(self.sesinw, self.secosw) * u.rad
+        self.w = (self.w_s + np.pi * u.rad) % (2 * np.pi * u.rad)
+        self.w_p = self.w
+        self.T_p = rvo.timetrans_to_timeperi(
+            self.T_c.jd, self.T.to(u.d).value, self.e, self.w_s.to(u.rad).value
+        )
+        self.msini = (
+            rvu.Msini(
+                self.K.decompose().value,
+                self.T.to(u.d).value,
+                self.star.mass.to(u.M_sun).value,
+                self.e,
+            )
+            * u.M_earth
+        )
+        self.mu = (const.G * self.star.mass).decompose()
+        self.a = ((self.mu * (self.T / (2 * np.pi)) ** 2) ** (1 / 3)).decompose()
+
+        # Finding the mean anomaly at time of conjunction
+        nu_p = (np.pi / 2 * u.rad - self.w_s) % (2 * np.pi * u.rad)
+        E_p = 2 * np.arctan2(
+            np.sqrt((1 - self.e)) * np.tan(nu_p / 2), np.sqrt((1 + self.e))
+        )
+        self.M0 = (E_p - self.e * np.sin(E_p) * u.rad) % (2 * np.pi * u.rad)
+        self.t0 = Time(self.T_c.jd, format="jd")
+
+        self.compare_to_system(true_system)
+
+    def compare_to_system(self, true_system):
+        """
+        Function to check how well a planet fit compares to the true system.
+        Gets the index of the planet that the fit is most likely describing
+        and the RMS error of the fit.
+        """
+        # Not doing argument of periastron because it is finicky for circular
+        # orbits
+        # werr = true_system.getpattr('w') - fitted_planet.w
+        eerr = true_system.getpattr("e") - self.e
+        Kerr = true_system.getpattr("K") - self.K
+        Terr = true_system.getpattr("T") - self.T
+
+        # Normalize the differences by the range of the system values
+        Knorm = Kerr / (np.ptp(true_system.getpattr("K")))
+        Tnorm = Terr / (np.ptp(true_system.getpattr("T")))
+
+        self.all_rms = np.sqrt(eerr**2 + Knorm**2 + Tnorm**2)
+        self.best_match = np.argmin(self.all_rms)
+        self.best_rms = self.all_rms[self.best_match]

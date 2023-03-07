@@ -66,7 +66,7 @@ class ExovistaUniverse(Universe):
 
         # Get star ids
         self.ids = [system.star.id for system in self.systems]
-        self.HIP_ids = [system.star.HIP_id for system in self.systems]
+        self.names = [system.star.name for system in self.systems]
 
         Universe.__init__(self)
 
@@ -96,7 +96,7 @@ class ExovistaSystem(System):
         for i in range(nplanets):
             self.planets.append(ExovistaPlanet(infile, planet_ext + i, self.star))
 
-        self.cleanup()
+        # self.cleanup()
 
         # Set up rebound simulation
         # self.sim = rebound.Simulation()
@@ -135,9 +135,10 @@ class ExovistaPlanet(Planet):
         with open(infile, "rb") as f:
             obj_data, obj_header = getdata(f, ext=fits_ext, header=True, memmap=False)
 
-        # Time data
+        self.star = star
+        # Time data, setting default epoch to the year 2000
         self._t = obj_data[:, 0] * u.yr
-        self.t0 = Time(self._t[0].to(u.yr).value, format="decimalyear")
+        self.t0 = Time(self._t[0].to(u.yr).value + 2000, format="decimalyear")
 
         # Position data
         self._x = obj_data[:, 9] * u.AU
@@ -148,19 +149,6 @@ class ExovistaPlanet(Planet):
         self._vx = obj_data[:, 12] * u.AU / u.yr
         self._vy = obj_data[:, 13] * u.AU / u.yr
         self._vz = obj_data[:, 14] * u.AU / u.yr
-
-        # Assign the planet's keplerian orbital elements
-        self.a = obj_header["A"] * u.AU
-        self.e = obj_header["E"]
-        self.inc = (obj_header["I"] * u.deg).to(u.rad)
-        self.W = (obj_header["LONGNODE"] * u.deg).to(u.rad)
-        # self.w = (obj_header["ARGPERI"] * u.deg).to(u.rad)
-        self.w = 0 * u.rad
-
-        # Assign the planet's mass/radius information
-        self.mass = obj_header["M"] * u.M_earth
-        self.radius = obj_header["R"] * u.R_earth
-
         # Assign the planet's time-varying mean anomaly, argument of pericenter,
         # true anomaly, and contrast
         self.rep_w = (obj_data[:, 7] * u.deg + 180 * u.deg) % (2 * np.pi * u.rad)
@@ -172,20 +160,46 @@ class ExovistaPlanet(Planet):
 
         # Initial mean anomaly
         self.M0 = self.nu[0]
+        planet_dict = {
+            "t0": self.t0,
+            "a": obj_header["A"] * u.AU,
+            "e": obj_header["E"],
+            "inc": (obj_header["I"] * u.deg).to(u.rad) + star.midplane_I,
+            "W": (obj_header["LONGNODE"] * u.deg).to(u.rad),
+            "w": 0 * u.rad,
+            "mass": obj_header["M"] * u.M_earth,
+            "radius": obj_header["R"] * u.R_earth,
+            "M0": self.M0,
+            "p": 0.2,
+        }
+        Planet.__init__(self, planet_dict)
+        self.solve_dependent_params()
 
-        # Gravitational parameter
-        self.mu = (const.G * (self.mass + star.mass)).decompose()
-        self.T = (2 * np.pi * np.sqrt(self.a**3 / self.mu)).to(u.d)
-        self.w_p = self.w
-        self.w_s = (self.w + np.pi * u.rad) % (2 * np.pi * u.rad)
-        self.secosw = np.sqrt(self.e) * np.cos(self.w)
-        self.sesinw = np.sqrt(self.e) * np.sin(self.w)
+        # Assign the planet's keplerian orbital elements
+        # self.a = obj_header["A"] * u.AU
+        # self.e = obj_header["E"]
+        # self.inc = (obj_header["I"] * u.deg).to(u.rad)
+        # self.W = (obj_header["LONGNODE"] * u.deg).to(u.rad)
+        # # self.w = (obj_header["ARGPERI"] * u.deg).to(u.rad)
+        # self.w = 0 * u.rad
+
+        # # Assign the planet's mass/radius information
+        # self.mass = obj_header["M"] * u.M_earth
+        # self.radius = obj_header["R"] * u.R_earth
+
+        # # Gravitational parameter
+        # self.mu = (const.G * (self.mass + star.mass)).decompose()
+        # self.T = (2 * np.pi * np.sqrt(self.a**3 / self.mu)).to(u.d)
+        # self.w_p = self.w
+        # self.w_s = (self.w + np.pi * u.rad) % (2 * np.pi * u.rad)
+        # self.secosw = np.sqrt(self.e) * np.cos(self.w)
+        # self.sesinw = np.sqrt(self.e) * np.sin(self.w)
 
         # Because we have the mean anomaly at an epoch we can calculate the
         # time of periastron as t0 - T_e where T_e is the time since periastron
         # passage
-        T_e = (self.T * self.M0 / (2 * np.pi * u.rad)).decompose()
-        self.T_p = self.t0 - T_e
+        # T_e = (self.T * self.M0 / (2 * np.pi * u.rad)).decompose()
+        # self.T_p = self.t0 - T_e
 
         # Calculate the time of conjunction
         # self.T_c = Time(
@@ -194,14 +208,14 @@ class ExovistaPlanet(Planet):
         #     ),
         #     format="jd",
         # )
-        self.K = (
-            (2 * np.pi * const.G / self.T) ** (1 / 3.0)
-            * (self.mass * np.sin(self.inc) / star.mass ** (2 / 3.0))
-            * (1 - self.e**2) ** (-1 / 2)
-        ).decompose()
+        # self.K = (
+        #     (2 * np.pi * const.G / self.T) ** (1 / 3.0)
+        #     * (self.mass * np.sin(self.inc) / star.mass ** (2 / 3.0))
+        #     * (1 - self.e**2) ** (-1 / 2)
+        # ).decompose()
 
-        # Mean angular motion
-        self.n = (np.sqrt(self.mu / self.a**3)).decompose() * u.rad
+        # # Mean angular motion
+        # self.n = (np.sqrt(self.mu / self.a**3)).decompose() * u.rad
 
         # Propagation table
         self.vectors = pd.DataFrame(
@@ -247,11 +261,13 @@ class ExovistaStar(Star):
 
         # System identifiers
         self.id = obj_header["STARID"]
-        self.name = obj_header["HIP"]
+        self.name = f"HIP_{obj_header['HIP']}"
 
         # System midplane information
         self.midplane_PA = (obj_header["PA"] * u.deg).to(u.rad)  # Position angle
-        self.midplane_I = (obj_header["I"] * u.deg).to(u.rad)  # Inclination
+        self.midplane_I = np.abs((obj_header["I"] * u.deg).to(u.rad))  # Inclination
+        # if self.midplane_I < 0:
+        #     breakpoint()
 
         # Proper motion
         self.PMRA = obj_header["PMRA"] * u.mas / u.yr

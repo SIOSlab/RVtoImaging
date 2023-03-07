@@ -123,6 +123,8 @@ class RVData:
         universe_spec = universe_params.copy()
         # Create hash from universe parameters
         new_params = {}
+        # delete_tmp = False
+        # original_script = universe_params["script"]
         if "script" in universe_params.keys():
             # Add exosims parameters into the universe params
             necessary_EXOSIMS_keys = [
@@ -167,8 +169,6 @@ class RVData:
                     json.dump(exosims_script, f)
                 delete_tmp = True
                 universe_params["script"] = str(tmp_file)
-            else:
-                delete_tmp = False
             for key in exosims_script.keys():
                 value = exosims_script[key]
                 if key in necessary_EXOSIMS_keys or key == "modules":
@@ -224,14 +224,14 @@ class RVData:
 
         # Add the star names to the specification dict
         universe_spec["stars"] = self.universe.names
-        if delete_tmp:
-            tmp_file.unlink()
+        if "script" in universe_params.keys():
+            if "forced_seed" in universe_params.keys():
+                universe_params["script"] = original_script
+            if delete_tmp:
+                tmp_file.unlink()
 
         # Update library
         utils.update(self.universe_dir, universe_spec)
-
-        if "forced_seed" in universe_params.keys():
-            universe_params["script"] = original_script
 
     def precursor_observations(self, preobs_params):
         assert hasattr(

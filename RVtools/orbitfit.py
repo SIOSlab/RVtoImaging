@@ -10,6 +10,7 @@ from astropy.time import Time
 import radvel
 import RVtools.utils as utils
 from rvsearch import search
+from RVtools.cosmos import FitSystem
 from RVtools.logger import logger
 
 
@@ -47,6 +48,9 @@ class OrbitFit:
                 rv_df = survey.syst_observations[system_id]
                 system = universe.systems[system_id]
                 star_name = system.star.name
+                # This could be uncommented, but with such low search times for
+                # new planets I don't think it's necessary
+
                 # Determine the maximum number of planets that can be detected
                 # k_vals = system.getpattr("K")
 
@@ -56,7 +60,6 @@ class OrbitFit:
                 # feasible_max = sum(
                 #     (k_vals > k_cutoff) & (system.getpattr("T") < 75 * u.yr)
                 # )
-                # UNCOMMENT THIS AFTER CURRENT RUN
                 # max_planets = min([feasible_max, self.max_planets])
                 max_planets = self.max_planets
 
@@ -142,6 +145,7 @@ class OrbitFit:
                             current_time + rate * runs_left
                         )
                         finish_str = finish_time.strftime("%c")
+
                     else:
                         finish_str = "TBD"
                     logger.info(
@@ -153,7 +157,13 @@ class OrbitFit:
                     )
 
                     # Run search
+                    # from pyinstrument import Profiler
+                    # profiler = Profiler()
+                    # profiler.start()
                     searcher.run_search(outdir=str(fit_dir), running=False)
+                    # profiler.stop()
+                    # profiler.open_in_browser()
+                    # breakpoint()
                     fits_completed += 1
 
                     n_obs = rv_df.shape[0]
@@ -189,6 +199,13 @@ class OrbitFit:
                         logger.info(
                             f"Found {planets_fitted} planets around {star_name}."
                         )
+                    if searcher.num_planets > 0:
+                        # Create a system from the fitted planets
+                        fitted_system = FitSystem(searcher, system)
+                        with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
+                            pickle.dump(fitted_system, f)
+                        print(system)
+                        print(fitted_system)
 
                     # Save specs
                     utils.update(fit_dir, fit_spec)
