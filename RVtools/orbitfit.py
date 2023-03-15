@@ -4,10 +4,8 @@ from datetime import datetime
 from pathlib import Path
 
 import astropy.units as u
-import numpy as np
 from astropy.time import Time
 
-import radvel
 import RVtools.utils as utils
 from rvsearch import search
 from RVtools.cosmos import FitSystem
@@ -20,10 +18,14 @@ class OrbitFit:
     """
 
     def __init__(self, params, universe, surveys, workers):
-        self.method = params["fitting_method"]
-        self.max_planets = params["max_planets"]
         self.workers = workers
-        self.universe_dir = Path(params["universe_dir"])
+        # self.method = params["fitting_method"]
+        # self.max_planets = params["max_planets"]
+        # self.vary_planets = params["vary_planets"]
+        # self.universe_dir = Path(params["universe_dir"])
+        for param, param_value in params.items():
+            # save input parameters to this object
+            setattr(self, param, param_value)
 
         # self.systems_to_fit = params["systems_to_fit"]
         self.paths = []
@@ -40,9 +42,10 @@ class OrbitFit:
         object to run orbit fitting with the RVsearch tool.
         """
         # fit_order = np.argsort([survey.fit_order for survey in surveys])
+        self.fits_completed = 0
+        self.fits_loaded = 0
+        start_time = time.time()
         for survey in surveys:
-            start_time = time.time()
-            fits_completed = 0
             self.systems_to_fit = survey.systems_to_observe
             for i, system_id in enumerate(self.systems_to_fit):
                 rv_df = survey.syst_observations[system_id]
@@ -134,37 +137,67 @@ class OrbitFit:
                             verbose=True,
                             max_planets=max_planets,
                             mstar=(system.star.mass.to(u.M_sun).value, 0),
+                            n_vary=self.vary_planets,
                         )
 
-                    if fits_completed > 0:
+                    if hasattr(self, "total_searches"):
+                        # When running seeds we use a different calculation
+                        # that accounts for how long the previous universes
+                        # took to calculate
+                        current_time = time.time()
+                        runs_left = (
+                            self.total_searches
+                            - self.loaded_searches
+                            - self.completed_searches
+                            - i
+                        )
+                        # Initial start time set in builder.run_seeds
+                        elapsed_time = current_time - self.initial_start_time
+                        if (self.fits_completed + self.completed_searches) > 0:
+                            # Rate at which one fit has been completed
+                            rate = elapsed_time / (
+                                self.fits_completed + self.completed_searches
+                            )
+                            finish_time = datetime.fromtimestamp(
+                                current_time + rate * runs_left
+                            )
+                            finish_str = finish_time.strftime("%c")
+                            rate_str = f"{rate/60:.2f} minutes per search"
+                        else:
+                            finish_str = "TBD"
+                            rate_str = "TBD"
+                        universe_str = (
+                            f"in universe {self.universe_number} of"
+                            f"{self.total_universes}. "
+                        )
+                    elif self.fits_completed > 0:
                         current_time = time.time()
                         runs_left = len(self.systems_to_fit) - i
                         elapsed_time = current_time - start_time
-                        rate = elapsed_time / fits_completed
+                        rate = elapsed_time / self.fits_completed
                         finish_time = datetime.fromtimestamp(
                             current_time + rate * runs_left
                         )
                         finish_str = finish_time.strftime("%c")
-
+                        rate_str = f"{rate/60:.2f} minutes per search"
+                        universe_str = "in universe 1 of 1. "
                     else:
                         finish_str = "TBD"
+                        rate_str = "TBD"
+                        universe_str = "in universe 1 of 1. "
                     logger.info(
                         (
-                            f"Searching {star_name} for up to {max_planets} planets."
-                            f" Star {i+1} of {len(self.systems_to_fit)}. "
-                            f"Estimated finish for orbit fitting: {finish_str}"
+                            f"Searching {star_name} for up to {max_planets} planets. "
+                            f"Star {i+1} of {len(self.systems_to_fit)} "
+                            f"{universe_str}"
+                            f"{rate_str}. "
+                            f"Estimated finish: {finish_str}."
                         )
                     )
 
                     # Run search
-                    # from pyinstrument import Profiler
-                    # profiler = Profiler()
-                    # profiler.start()
                     searcher.run_search(outdir=str(fit_dir), running=False)
-                    # profiler.stop()
-                    # profiler.open_in_browser()
-                    # breakpoint()
-                    fits_completed += 1
+                    self.fits_completed += 1
 
                     n_obs = rv_df.shape[0]
                     obs_baseline = (
@@ -199,94 +232,13 @@ class OrbitFit:
                         logger.info(
                             f"Found {planets_fitted} planets around {star_name}."
                         )
-                    if searcher.num_planets > 0:
-                        # Create a system from the fitted planets
-                        fitted_system = FitSystem(searcher, system)
-                        with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
-                            pickle.dump(fitted_system, f)
-                        print(system)
-                        print(fitted_system)
+                        if searcher.num_planets > 0:
+                            # Create a system from the fitted planets
+                            fitted_system = FitSystem(searcher, system)
+                            with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
+                                pickle.dump(fitted_system, f)
 
                     # Save specs
                     utils.update(fit_dir, fit_spec)
-
-    def change_post(self, survey, rv_df, max_planets, search_path):
-        """
-        To change the post we have to update the data and reset gamma/jitter values
-        """
-        with open(search_path, "rb") as f:
-            searcher = pickle.load(f)
-        searcher.data = rv_df
-        searcher.workers = self.workers
-        searcher.max_planets = max_planets
-        initial_params = searcher.post.params
-        vector = searcher.post.vector.vector
-        vector_names = searcher.post.vector.names
-        vector_indices = searcher.post.vector.indices
-        param_keys = [key for key in initial_params.keys()]
-        deleted_keys = 0
-        for key in param_keys:
-            if "gamma" in key or "jit" in key:
-                # Remove it from the names, indices, and row
-                value = vector_indices[key]
-                del vector_names[value - deleted_keys]
-                vector = np.delete(vector, (value - deleted_keys), axis=0)
-                vector_indices.pop(key)
-                deleted_keys += 1
-                initial_params.pop(key)
-        next_ind = vector.shape[0]
-
-        gamma_arr = np.array([[0, 0, 0, 1]])
-        jit_arr = np.array([[2, 1, 0, 0]])
-        extra_params = []
-        for inst in survey.instruments:
-            # Add gamma
-            gamma_key = f"gamma_{inst.name}"
-            vector = np.concatenate([vector, gamma_arr], axis=0)
-            vector_names.append(gamma_key)
-            vector_indices[gamma_key] = next_ind
-            initial_params[gamma_key] = radvel.Parameter(
-                value=0.0, linear=True, vary=False
-            )
-            extra_params.append(gamma_key)
-            next_ind += 1
-
-            # Add jitter
-            jit_key = f"jit_{inst.name}"
-            vector = np.concatenate([vector, jit_arr], axis=0)
-            vector_names.append(jit_key)
-            vector_indices[jit_key] = next_ind
-            initial_params[jit_key] = radvel.Parameter(value=0.0)
-            extra_params.append(jit_key)
-            next_ind += 1
-        searcher.post.params = initial_params
-        searcher.post.vector.vector = vector
-        searcher.post.vector.names = vector_names
-        searcher.post.vector.indices = vector_indices
-        searcher.post.likelihood.extra_params = extra_params
-
-        # Change the vary parameters
-        # no_vary_keys = ["per", "secosw", "sesinw"]
-        # vary_keys = ["k", "tc"]
-        # for planet in range(searcher.num_planets):
-        # pnum = searcher.num_planets + 1
-        # for key in no_vary_keys:
-        #     vind = searcher.post.vector.indices[f"{key}{pnum}"]
-        #     searcher.post.vector.vector[vind, 1] = 0
-        # for key in vary_keys:
-        #     vind = searcher.post.vector.indices[f"{key}{pnum}"]
-        #     searcher.post.vector.vector[vind, 1] = 1
-        # breakpoint()
-        searcher.post.vector.vector_to_dict()
-        searcher.post.list_vary_params()
-        searcher.post.get_vary_params()
-
-        # Subtract until there's one planet less than the max
-        while (
-            searcher.post.params.num_planets >= max_planets
-            or searcher.post.params.num_planets == 1
-        ):
-            print("subtracted planet")
-            searcher.sub_planet()
-        # searcher.post = radvel.fitting.maxlike_fitting(searcher.post, verbose=True)
-        return searcher
+                else:
+                    self.fits_loaded += 1

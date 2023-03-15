@@ -589,6 +589,8 @@ class FitSystem(System):
             # Initialize the planet object
             planet = FitPlanet(plan_dict, true_system)
             self.planets.append(planet)
+        self.pInds = np.arange(0, search_obj.num_planets)
+        self.cleanup()
         self.true_system = true_system
 
     def get_p_df(self):

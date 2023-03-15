@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -96,6 +97,42 @@ class BaseBuilder(Builder):
 
     def create_schedule(self):
         self.rvdata.run_scheduler(self.schedule_params)
+
+    def build_orbit_fits(self) -> None:
+        self.create_universe()
+        self.simulate_rv_observations()
+        self.orbit_fitting()
+
+    def build_full_info(self) -> None:
+        self.create_universe()
+        self.simulate_rv_observations()
+        self.orbit_fitting()
+        self.probability_of_detection()
+        self.create_schedule()
+
+    def run_seeds(self):
+        # Used for time estimation
+        self.orbitfit_params["initial_start_time"] = time.time()
+        self.orbitfit_params["total_searches"] = (
+            len(self.seeds) * self.preobs_params["n_systems_to_observe"]
+        )
+        self.orbitfit_params["completed_searches"] = 0
+        self.orbitfit_params["loaded_searches"] = 0
+        self.orbitfit_params["total_universes"] = len(self.seeds)
+
+        for seed_ind, seed in enumerate(self.seeds):
+            self.universe_params["forced_seed"] = int(seed)
+            self.orbitfit_params["universe_number"] = seed_ind + 1
+
+            if hasattr(self, "pdet_params"):
+                self.pdet_params["forced_seed"] = int(seed)
+                self.build_full_info()
+            else:
+                self.build_orbit_fits()
+            self.orbitfit_params[
+                "completed_searches"
+            ] += self.rvdata.orbitfit.fits_completed
+            self.orbitfit_params["loaded_searches"] += self.rvdata.orbitfit.fits_loaded
 
 
 class RVData:
@@ -335,60 +372,6 @@ class RVData:
         print(f"RVData parts: {', '.join(self.parts)}", end="")
 
 
-class Director:
-    """
-    The Director is only responsible for executing the building steps in a
-    particular sequence. It is helpful when producing precursor_datas according to a
-    specific order or configuration. Strictly speaking, the Director class is
-    optional, since the client can control builders directly.
-    """
-
-    def __init__(self) -> None:
-        self._builder = None
-
-    @property
-    def builder(self) -> Builder:
-        return self._builder
-
-    @builder.setter
-    def builder(self, builder: Builder) -> None:
-        """
-        The Director works with any builder instance that the client code passes
-        to it. This way, the client code may alter the final type of the newly
-        assembled precursor_data.
-        """
-        self._builder = builder
-
-    """
-    The Director can construct several precursor_data variations using the same
-    building steps.
-    """
-
-    def build_universe(self) -> None:
-        self.builder.create_universe()
-
-    def build_orbit_fits(self) -> None:
-        self.builder.create_universe()
-        self.builder.simulate_rv_observations()
-        self.builder.orbit_fitting()
-
-    def run_seeds(self, seeds):
-        for seed in seeds:
-            self.builder.universe_params["forced_seed"] = int(seed)
-            if hasattr(self.builder, "pdet_params"):
-                self.builder.pdet_params["forced_seed"] = int(seed)
-                self.build_full_info()
-            else:
-                self.build_orbit_fits()
-
-    def build_full_info(self) -> None:
-        self.builder.create_universe()
-        self.builder.simulate_rv_observations()
-        self.builder.orbit_fitting()
-        self.builder.probability_of_detection()
-        self.builder.create_schedule()
-
-
 if __name__ == "__main__":
     """
     The client code creates a builder object, passes it to the director and then
@@ -396,24 +379,24 @@ if __name__ == "__main__":
     builder object.
     """
 
-    director = Director()
-    builder = BaseBuilder()
-    director.builder = builder
+    # director = Director()
+    # builder = BaseBuilder()
+    # director.builder = builder
 
-    print("Standard basic rvdata: ")
-    director.build_minimal_viable_rvdata()
-    builder.precursor_data.list_parts()
+    # print("Standard basic rvdata: ")
+    # director.build_minimal_viable_rvdata()
+    # builder.precursor_data.list_parts()
 
-    print("\n")
+    # print("\n")
 
-    print("Standard full featured rvdata: ")
-    director.build_full_info()
-    builder.precursor_data.list_parts()
+    # print("Standard full featured rvdata: ")
+    # director.build_full_info()
+    # builder.precursor_data.list_parts()
 
-    print("\n")
+    # print("\n")
 
-    # Remember, the Builder pattern can be used without a Director class.
-    print("Custom rvdata: ")
-    builder.create_universe()
-    builder.simulate_rv_observations()
-    builder.precursor_data.list_parts()
+    # # Remember, the Builder pattern can be used without a Director class.
+    # print("Custom rvdata: ")
+    # builder.create_universe()
+    # builder.simulate_rv_observations()
+    # builder.precursor_data.list_parts()
