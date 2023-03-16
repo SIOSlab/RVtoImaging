@@ -5,7 +5,7 @@ import astropy.units as u
 import numpy as np
 from astropy.time import Time
 
-from RVtools.builder import BaseBuilder, Director
+from RVtools.builder import BaseBuilder
 
 if __name__ == "__main__":
     # Load settings for this machine
@@ -18,9 +18,9 @@ if __name__ == "__main__":
     last_seed = settings["last_seed"]
 
     # Set up director and builder objects
-    director = Director()
+    # director = Director()
     builder = BaseBuilder(cache_dir=cache_dir, workers=workers)
-    director.builder = builder
+    # director.builder = builder
 
     ######################################################################
     # Set up universe generation
@@ -29,6 +29,11 @@ if __name__ == "__main__":
         "universe_type": "exosims",
         "script": "test.json",
     }
+    # builder.universe_params = {
+    #     "universe_type": "exosims",
+    #     "data_path": "data/",
+    #     "universe_number": 1,
+    # }
 
     ######################################################################
     # Set up precursor observation information
@@ -63,7 +68,8 @@ if __name__ == "__main__":
         "base_params": base_params,
         "surveys": surveys,
         "n_systems_to_observe": nsystems,
-        "filters": ["distance"],
+        "target_list": ".cache/NETS_30.csv",
+        "filters": [],
     }
 
     ######################################################################
@@ -71,12 +77,14 @@ if __name__ == "__main__":
     ######################################################################
     builder.orbitfit_params = {
         "fitting_method": "rvsearch",
-        "max_planets": 5,
+        "max_planets": 4,
+        "vary_planets": np.inf,
     }
 
     # RUN THE SEEDS
-    seeds = [int(seed) for seed in np.arange(first_seed, last_seed, 1)]
-    director.run_seeds(seeds)
+    seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
+    builder.seeds = seeds
+    builder.run_seeds()
     ######################################################################
     # Probability of detection
     ######################################################################

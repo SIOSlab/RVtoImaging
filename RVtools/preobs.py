@@ -7,6 +7,7 @@ import astropy.units as u
 import numpy as np
 import pandas as pd
 from astropy.time import Time
+from astroquery.simbad import Simbad
 from tqdm import tqdm
 
 from RVtools.logger import logger
@@ -39,6 +40,7 @@ class PreObs:
         self.fit_order = params["fit_order"]
         self.n_systems_to_observe = params["n_systems_to_observe"]
         self.filters = params["filters"]
+        self.target_list = params["target_list"]
 
         self.systems_to_observe = self.choose_systems(universe)
 
@@ -139,7 +141,12 @@ class PreObs:
             syst_obs.to_csv(Path(syst_folder, "rv.csv"))
 
     def choose_systems(self, universe):
-        if "distance" in self.filters:
+        if self.target_list is not None:
+            tldf = pd.read_csv(self.target_list)
+            breakpoint()
+            query = Simbad.query_object(tldf.name)
+            query
+        elif "distance" in self.filters:
             dists = np.array(
                 [
                     (system.star.dist.value, i)
