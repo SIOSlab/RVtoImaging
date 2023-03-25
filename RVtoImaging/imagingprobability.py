@@ -17,13 +17,13 @@ from tqdm import tqdm
 
 import radvel.orbit as rvo
 import radvel.utils as rvu
-import RVtools.plots
-import RVtools.utils as utils
+import RVtoImaging.plots
+import RVtoImaging.utils as utils
 from EXOSIMS.util.get_module import get_module_from_specs
-from RVtools.logger import logger
+from RVtoImaging.logger import logger
 
 
-class PDet:
+class ImagingProbability:
     """
     Base class to do probability of detection calculations
     """
@@ -48,7 +48,7 @@ class PDet:
         # Check for the chains
         for system_id, system_path in zip(orbitfit.systems_to_fit, orbitfit.paths):
             system = universe.systems[system_id]
-            if not system.star.name.replace("_", " ") in self.SS.TargetList.Name:
+            if system.star.name.replace("_", " ") not in self.SS.TargetList.Name:
                 logger.warning(
                     (
                         f"The {system.star.name} system is not "
@@ -227,7 +227,7 @@ class PDet:
                 color = cmap(cvals[current_cmap_ind])
                 color_mapping[pop.closest_planet_ind] = color
                 current_cmap_ind += 1
-                ax = RVtools.plots.pop_3d(ax, pop, t.jd, color)
+                ax = RVtoImaging.plots.pop_3d(ax, pop, t.jd, color)
             pdet_ax.plot(times.decimalyear[:ind], pop.pdets[:ind], color=color)
             # Add the real planets
             for i, planet in enumerate(system.planets):
@@ -515,7 +515,7 @@ class PlanetPopulation:
 
     def prop_for_imaging(self, t):
         # Calculates the working angle and deltaMag
-        a, e, I, w = self.a, self.e, self.inc, self.w
+        a, e, inc, w = self.a, self.e, self.inc, self.w
         M = utils.mean_anom(self, t)
         E = kt.eccanom(M.value, self.e)
         nu = kt.trueanom(E, e) * u.rad
@@ -523,13 +523,13 @@ class PlanetPopulation:
 
         theta = nu + w
         s = (r / 4) * np.sqrt(
-            4 * np.cos(2 * I)
+            4 * np.cos(2 * inc)
             + 4 * np.cos(2 * theta)
-            - 2 * np.cos(2 * I - 2 * theta)
-            - 2 * np.cos(2 * I + 2 * theta)
+            - 2 * np.cos(2 * inc - 2 * theta)
+            - 2 * np.cos(2 * inc + 2 * theta)
             + 12
         )
-        beta = np.arccos(-np.sin(I) * np.sin(theta))
+        beta = np.arccos(-np.sin(inc) * np.sin(theta))
         # For gas giants
         # p_phi = self.calc_p_phi(beta, photdict, bandinfo)
         # For terrestrial planets

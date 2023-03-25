@@ -8,37 +8,40 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import dill
-import numpy as np
 
-import RVtools.utils as utils
-from RVtools.logger import logger
-from RVtools.orbitfit import OrbitFit
-from RVtools.pdet import PDet
-from RVtools.preobs import PreObs
-from RVtools.scheduler import Scheduler
+import RVtoImaging.utils as utils
+from RVtoImaging.imagingprobability import ImagingProbability
+from RVtoImaging.imagingschedule import ImagingSchedule
+from RVtoImaging.logger import logger
+from RVtoImaging.rvdataset import RVDataset
+from RVtoImaging.rvfits import RVFits
 
 
 class Builder(ABC):
     """
     The Builder interface specifies methods for creating the different parts of
-    the RVData objects.
+    the RVtoImaging objects.
     """
 
     @property
     @abstractmethod
-    def precursor_data(self) -> None:
+    def get_rv2img(self) -> None:
         pass
 
     @abstractmethod
-    def create_universe(self) -> None:
+    def build_universe(self) -> None:
         pass
 
     @abstractmethod
-    def simulate_rv_observations(self) -> None:
+    def build_rv_dataset(self) -> None:
         pass
 
     @abstractmethod
-    def orbit_fitting(self) -> None:
+    def build_rv_fits(self) -> None:
+        pass
+
+    @abstractmethod
+    def build_img_schedule(self) -> None:
         pass
 
 
@@ -50,7 +53,7 @@ class BaseBuilder(Builder):
 
     def __init__(self, cache_dir=".cache", workers=1):
         """
-        A fresh builder instance should contain a blank rvdata object, which is
+        A fresh builder instance should contain a blank rv2img object, which is
         used in further assembly.
         """
         self.cache_dir = cache_dir
@@ -58,96 +61,98 @@ class BaseBuilder(Builder):
         self.reset()
 
     def reset(self):
-        self.rvdata = RVData(self.cache_dir, self.workers)
+        self.rv2img = RVtoImaging(self.cache_dir, self.workers)
 
     @property
-    def precursor_data(self) -> RVData:
+    def get_rv2img(self) -> RVtoImaging:
         """
         Concrete Builders are supposed to provide their own methods for
         retrieving results. That's because various types of builders may create
-        entirely different precursor_datas that don't follow the same interface.
+        entirely different rv2img that don't follow the same interface.
         Therefore, such methods cannot be declared in the base Builder interface
         (at least in a statically typed programming language).
 
         Usually, after returning the end result to the client, a builder
-        instance is expected to be ready to start producing another precursor_data.
+        instance is expected to be ready to start producing another rv2img.
         That's why it's a usual practice to call the reset method at the end of
-        the `getRVData` method body. However, this behavior is not mandatory,
+        the `getrv2img` method body. However, this behavior is not mandatory,
         and you can make your builders wait for an explicit reset call from the
         client code before disposing of the previous result.
         """
-        precursor_data = self.rvdata
+        rv2img = self.rv2img
         self.reset()
-        return precursor_data
+        return rv2img
 
-    def create_universe(self):
-        logger.info("Creating universe")
-        self.rvdata.create_universe(self.universe_params)
+    def build_universe(self):
+        logger.info("Building universe")
+        self.rv2img.create_universe(self.universe_params)
 
-    def simulate_rv_observations(self):
-        logger.info("Creating precursor observations")
-        self.rvdata.precursor_observations(self.preobs_params)
+    def build_rv_dataset(self):
+        logger.info("Building RV dataset")
+        self.rv2img.create_rv_dataset(self.rv_dataset_params)
 
-    def orbit_fitting(self):
-        logger.info("Running orbit fitting")
-        self.rvdata.orbit_fitting(self.orbitfit_params)
+    def build_rv_fits(self):
+        logger.info("Building orbit fits")
+        self.rv2img.create_rv_fits(self.rv_fits_params)
 
-    def probability_of_detection(self):
-        self.rvdata.calc_pdet(self.pdet_params)
+    # MOVE THIS TO THE SCHEDULER!
+    # def probability_of_detection(self):
+    #     logger.info("Building orbit fits")
+    #     self.rv2img.calc_pdet(self.pdet_params)
 
-    def create_schedule(self):
-        self.rvdata.run_scheduler(self.schedule_params)
+    def build_img_schedule(self):
+        self.rv2img.create_img_schedule(self.img_schedule_params)
 
-    def build_orbit_fits(self) -> None:
-        self.create_universe()
-        self.simulate_rv_observations()
-        self.orbit_fitting()
+    def build_to_fits(self) -> None:
+        self.build_universe()
+        self.build_rv_dataset()
+        self.build_rv_fits()
 
-    def build_full_info(self) -> None:
-        self.create_universe()
-        self.simulate_rv_observations()
-        self.orbit_fitting()
-        self.probability_of_detection()
-        self.create_schedule()
+    def build_to_img_schedule(self) -> None:
+        self.build_universe()
+        self.build_rv_dataset()
+        self.build_rv_fits()
+        # self.probability_of_detection()
+        self.build_img_schedule()
 
     def run_seeds(self):
         # Used for time estimation
-        self.orbitfit_params["initial_start_time"] = time.time()
-        self.orbitfit_params["total_searches"] = (
-            len(self.seeds) * self.preobs_params["n_systems_to_observe"]
+        self.rv_fits_params["initial_start_time"] = time.time()
+        self.rv_fits_params["total_searches"] = (
+            len(self.seeds) * self.rv_dataset_params["approx_systems_to_observe"]
         )
-        self.orbitfit_params["completed_searches"] = 0
-        self.orbitfit_params["loaded_searches"] = 0
-        self.orbitfit_params["total_universes"] = len(self.seeds)
+        self.rv_fits_params["completed_searches"] = 0
+        self.rv_fits_params["loaded_searches"] = 0
+        self.rv_fits_params["total_universes"] = len(self.seeds)
 
         for seed_ind, seed in enumerate(self.seeds):
             self.universe_params["forced_seed"] = int(seed)
-            self.orbitfit_params["universe_number"] = seed_ind + 1
+            self.rv_fits_params["universe_number"] = seed_ind + 1
 
             if hasattr(self, "pdet_params"):
                 self.pdet_params["forced_seed"] = int(seed)
-                self.build_full_info()
+                self.build_to_img_schedule()
             else:
-                self.build_orbit_fits()
-            self.orbitfit_params[
+                self.build_to_fits()
+            self.rv_fits_params[
                 "completed_searches"
-            ] += self.rvdata.orbitfit.fits_completed
-            self.orbitfit_params["loaded_searches"] += self.rvdata.orbitfit.fits_loaded
+            ] += self.rv2img.orbitfit.fits_completed
+            self.rv_fits_params["loaded_searches"] += self.rv2img.orbitfit.fits_loaded
 
 
-class RVData:
+class RVtoImaging:
     """
     This class holds all the different parts of the simulation:
         Universe
-        PrecursorObservations
-        OrbitFit
-        PDet
+        RVDataset
+        RVFitting
+        ImagingScheduler
 
-    It makes sense to use the Builder pattern only when your precursor_datas are quite
+    It makes sense to use the Builder pattern only when your rv2img are quite
     complex and require extensive configuration.
 
     Unlike in other creational patterns, different concrete builders can produce
-    unrelated precursor_datas. In other words, results of various builders may not
+    unrelated rv2img. In other words, results of various builders may not
     always follow the same interface.
     """
 
@@ -251,7 +256,9 @@ class RVData:
             logger.info(f"Loaded universe from {self.universe_path}")
         else:
             # Create
-            universelib = importlib.import_module(f"RVtools.cosmoses.{universe_type}")
+            universelib = importlib.import_module(
+                f"RVtoImaging.cosmoses.{universe_type}"
+            )
             self.universe = universelib.create_universe(universe_params)
 
             # Cache
@@ -261,6 +268,8 @@ class RVData:
 
         # Add the star names to the specification dict
         universe_spec["stars"] = self.universe.names
+        # Creating the spec should be a universe class method instead of the
+        # current process
         if "script" in universe_params.keys():
             if "forced_seed" in universe_params.keys():
                 universe_params["script"] = original_script
@@ -270,72 +279,92 @@ class RVData:
         # Update library
         utils.update(self.universe_dir, universe_spec)
 
-    def precursor_observations(self, preobs_params):
+    def create_rv_dataset(self, rv_dataset_params):
         assert hasattr(
             self, "universe_path"
-        ), "Precursor observations must have a set universe for caching"
+        ), "RV dataset must have a set universe for caching"
 
-        base_params = preobs_params["base_params"]
-        self.surveys = []
-        for survey in preobs_params["surveys"]:
-            # Create descriptive name for survey based on the input parameters
-            survey_params = preobs_params.copy()
-            survey_params.pop("surveys")
-            survey_params.update({"instruments": survey["instruments"]})
-            survey_params.update({"fit_order": survey["fit_order"]})
-            survey_name = ""
+        # base_params = rv_dataset_params["base_params"]
+        rv_dataset_params["universe_dir"] = self.universe_dir
+        self.rvdataset = RVDataset(rv_dataset_params, self.universe)
+        # for rv_observing_runs in rv_dataset_params["rv_observing_runs"]:
+        #     # Create descriptive name for rv_dataset based on the input parameters
+        #     rv_observing_run_params = rv_dataset_params.copy()
+        #     rv_observing_run_params.pop("rv_observing_runs")
+        #     # rv_observing_run_params.update(
+        #     #     {"instruments": rv_observing_runs["instruments"]}
+        #     # )
+        #     # rv_observing_run_params.update(
+        #     #     {"fit_order": rv_observing_runs["fit_order"]}
+        #     # )
+        #     rv_observing_run_name = ""
 
-            # Sorting the instruments by their precisions to maintain consistency
-            inst_precisions = []
-            inst_baselines = []
-            for inst in survey["instruments"]:
-                inst_params = base_params.copy()
-                inst_params.update(inst)
-                inst_precisions.append(inst_params["precision"].decompose().value)
-                inst_baselines.append(
-                    round(
-                        (
-                            inst_params["end_time"].decimalyear
-                            - inst_params["start_time"].decimalyear
-                        )
-                    )
-                )
-            sorted_inds = np.flip(np.argsort(inst_precisions))
+        #     # Sorting the instruments by their precisions to maintain consistency
+        #     obs_run_precisions = []
+        #     obs_run_baselines = []
+        #     for obs_run in rv_observing_runs["instruments"]:
+        #         # obs_run_params = base_params.copy()
+        #         obs_run_params.update(obs_run)
+        #         # TODO - ADD ALL THIS CACHING TO THE MODULE ITSELF
+        #         # inst_precisions.append(inst_params["precision"].decompose().value)
+        #         breakpoint()
+        #         obs_run_precisions.append()
+        #         obs_run_baselines.append(
+        #             round(
+        #                 (
+        #                     obs_run_params["end_time"].decimalyear
+        #                     - obs_run_params["start_time"].decimalyear
+        #                 )
+        #             )
+        #         )
+        #     sorted_inds = np.flip(np.argsort(obs_run_precisions))
 
-            # Create name to identify the survey in files
-            for ind in sorted_inds:
-                survey_name += f"{inst_precisions[ind]:.2f}m_{inst_baselines[ind]}-"
-            survey_name += f"{survey_params['n_systems_to_observe']}_systems-filter"
-            for filter in sorted(survey_params["filters"]):
-                survey_name += f"_{filter}"
-            survey_params["name"] = survey_name
+        #     # Create name to identify the rv_observing_run in files
+        #     for ind in sorted_inds:
+        #         rv_observing_run_name += (
+        #             f"{obs_run_precisions[ind]:.2f}m_{obs_run_baselines[ind]}-"
+        #         )
+        #     rv_observing_run_name += (
+        #         f"{rv_observing_run_params['approx_systems_to_observe']}_systems-filter"
+        #     )
+        #     for filter in sorted(rv_observing_run_params["filters"]):
+        #         rv_observing_run_name += f"_{filter}"
+        #     rv_observing_run_params["name"] = rv_observing_run_name
 
-            # Create filename
-            survey_file = Path(self.universe_dir, "surveys", f"{survey_name}.p")
-            survey_params["universe_dir"] = self.universe_dir
+        #     # Create filename
+        #     rv_observing_run_file = Path(
+        #         self.universe_dir, "rv_observing_runs", f"{rv_observing_run_name}.p"
+        #     )
+        #     rv_observing_run_params["universe_dir"] = self.universe_dir
 
-            # Caching information
-            if not survey_file.exists():
-                # Create precursor observations
-                survey = PreObs(survey_params, self.universe)
+        #     # Caching information
+        #     if not rv_observing_run_file.exists():
+        #         # Create RV dataset
+        #         rv_observing_run = RVDataset(rv_observing_run_params, self.universe)
 
-                # Cache
-                Path(self.universe_dir, "surveys").mkdir(exist_ok=True)
-                with open(survey_file, "wb") as f:
-                    dill.dump(survey, f)
-                logger.info(f"Ran {survey_name} survey, saved to {survey_file}")
-            else:
-                # Load
-                with open(survey_file, "rb") as f:
-                    survey = dill.load(f)
-                logger.info(f"Loaded {survey_name} survey from {survey_file}")
+        #         # Cache
+        #         Path(self.universe_dir, "rv_observing_runs").mkdir(exist_ok=True)
+        #         with open(rv_observing_run_file, "wb") as f:
+        #             dill.dump(rv_observing_run, f)
+        #         logger.info(
+        #             f"Ran {rv_observing_run_name} rv observing run,"
+        #             f" saved to {rv_observing_run_file}"
+        #         )
+        #     else:
+        #         # Load
+        #         with open(rv_observing_run_file, "rb") as f:
+        #             rv_observing_run = dill.load(f)
+        #         logger.info(
+        #             f"Loaded {rv_observing_run_name} rv observing run"
+        #             f" from {rv_observing_run_file}"
+        #         )
 
-            self.surveys.append(survey)
+        #     self.rv_observing_runs.append(rv_observing_run)
 
-    def orbit_fitting(self, orbitfit_params):
-        orbitfit_params["universe_dir"] = self.universe_dir
-        self.orbitfit = OrbitFit(
-            orbitfit_params, self.universe, self.surveys, self.workers
+    def create_rv_fits(self, rv_fits_params):
+        rv_fits_params["universe_dir"] = self.universe_dir
+        self.orbitfit = RVFits(
+            rv_fits_params, self.universe, self.rvdataset, self.workers
         )
 
     def calc_pdet(self, pdet_params):
@@ -359,17 +388,21 @@ class RVData:
             pdet_params["script"] = str(tmp_file)
         else:
             delete_tmp = False
-        self.pdet = PDet(pdet_params, self.orbitfit, self.universe, self.workers)
+        self.pdet = ImagingProbability(
+            pdet_params, self.orbitfit, self.universe, self.workers
+        )
         if delete_tmp:
             tmp_file.unlink()
         if "forced_seed" in pdet_params.keys():
             pdet_params["script"] = original_script
 
-    def run_scheduler(self, schedule_params):
-        self.scheduler = Scheduler(schedule_params, self.pdet, self.universe_dir)
+    def create_img_schedule(self, img_schedule_params):
+        self.scheduler = ImagingSchedule(
+            img_schedule_params, self.pdet, self.universe_dir
+        )
 
     def list_parts(self) -> None:
-        print(f"RVData parts: {', '.join(self.parts)}", end="")
+        print(f"rv2img parts: {', '.join(self.parts)}", end="")
 
 
 if __name__ == "__main__":
@@ -383,20 +416,20 @@ if __name__ == "__main__":
     # builder = BaseBuilder()
     # director.builder = builder
 
-    # print("Standard basic rvdata: ")
-    # director.build_minimal_viable_rvdata()
+    # print("Standard basic rv2img: ")
+    # director.build_minimal_viable_rv2img()
     # builder.precursor_data.list_parts()
 
     # print("\n")
 
-    # print("Standard full featured rvdata: ")
+    # print("Standard full featured rv2img: ")
     # director.build_full_info()
     # builder.precursor_data.list_parts()
 
     # print("\n")
 
     # # Remember, the Builder pattern can be used without a Director class.
-    # print("Custom rvdata: ")
+    # print("Custom rv2img: ")
     # builder.create_universe()
     # builder.simulate_rv_observations()
     # builder.precursor_data.list_parts()

@@ -9,7 +9,7 @@ from astropy.time import Time
 from tqdm import tqdm
 
 from EXOSIMS.util.get_module import get_module_from_specs
-from RVtools.cosmos import Planet, Star, System, Universe
+from RVtoImaging.cosmos import Planet, Star, System, Universe
 
 
 def create_universe(universe_params):
@@ -133,7 +133,7 @@ class ExosimsStar(Star):
 
         # System identifiers
         self.id = sInd
-        self.name = TL.Name[sInd].replace(" ", "_")
+        self.name = TL.Name[sInd]
 
         # System midplane information
         # self.midplane_PA = (obj_header["PA"] * u.deg).to(u.rad)  # Position angle

@@ -7,7 +7,7 @@ from astropy.time import Time
 from ortools.linear_solver import pywraplp
 
 
-class Scheduler:
+class ImagingSchedule:
     """
     Base class to do probability of detection calculations
     """

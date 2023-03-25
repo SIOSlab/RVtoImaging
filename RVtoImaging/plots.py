@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.time import Time
 
-import RVtools.utils as utils
+import RVtoImaging.utils as utils
 
 
 def pop_3d(ax, pop, time_jd, color="r"):

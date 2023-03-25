@@ -11,7 +11,7 @@ import pandas as pd
 from keplertools import fun as kt
 from tqdm import tqdm
 
-from RVtools.logger import logger
+from RVtoImaging.logger import logger
 
 
 def runcmd(cmd, verbose=False):
@@ -155,7 +155,7 @@ def calc_position_vectors2(obj, times):
 
 def prop_for_imaging(obj, t):
     # Calculates the working angle and deltaMag
-    a, e, I, w = obj.a, obj.e, obj.inc, obj.w
+    a, e, inc, w = obj.a, obj.e, obj.inc, obj.w
 
     M = mean_anom(obj, t)
     E = kt.eccanom(M.to(u.rad).value, obj.e)
@@ -164,13 +164,13 @@ def prop_for_imaging(obj, t):
 
     r = a * (1 - e**2) / (1 + e * np.cos(nu))
     s = (r / 4) * np.sqrt(
-        4 * np.cos(2 * I)
+        4 * np.cos(2 * inc)
         + 4 * np.cos(2 * theta)
-        - 2 * np.cos(2 * I - 2 * theta)
-        - 2 * np.cos(2 * I + 2 * theta)
+        - 2 * np.cos(2 * inc - 2 * theta)
+        - 2 * np.cos(2 * inc + 2 * theta)
         + 12
     )
-    beta = np.arccos(-np.sin(I) * np.sin(theta))
+    beta = np.arccos(-np.sin(inc) * np.sin(theta))
     # For gas giants
     # p_phi = self.calc_p_phi(beta, photdict, bandinfo)
     # For terrestrial planets
@@ -335,7 +335,7 @@ def replace_EXOSIMS_system(SS, sInd, system):
     #         inds = np.where(SU.plan2star == replacement_ind)[0]
     #         first_ind = inds[0]
     #         last_ind = inds[-1]
-    atts = ["a", "e", "I", "O", "w", "M0", "Mp", "Rp", "p"]
+    atts = ["a", "e", "inc", "O", "w", "M0", "Mp", "Rp", "p"]
     RVtools_atts = ["a", "e", "inc", "W", "w", "M0", "mass", "radius", "p"]
     for att, rvtools_att in zip(atts, RVtools_atts):
         # Get the parts of the array before and after the star to be replaced
@@ -494,7 +494,8 @@ def compare_schedule(builder):
     # system_dump = baseSU.dump_systems()
     # SS.SimulatedUniverse.load_systems(system_dump)
     # prefilter_SS = copy.deepcopy(SS)
-    # prefilter_sInds = [np.argwhere(SS.TargetList.Name == star)[0][0] for star in stars]
+    # prefilter_sInds =
+    # [np.argwhere(SS.TargetList.Name == star)[0][0] for star in stars]
     # pInds = np.sort(
     #     np.concatenate(
     #         [
@@ -549,7 +550,8 @@ def compare_schedule(builder):
     # num_char_modes = len(
     #     list(filter(lambda mode: "spec" in mode["inst"]["name"], allModes))
     # )
-    # SS.fullSpectra = np.zeros((num_char_modes, SS.SimulatedUniverse.nPlans), dtype=int)
+    # SS.fullSpectra = np.zeros((num_char_modes, SS.SimulatedUniverse.nPlans),
+    # dtype=int)
     # SS.partialSpectra = np.zeros(
     #     (num_char_modes, SS.SimulatedUniverse.nPlans), dtype=int
     # )

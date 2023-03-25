@@ -10,8 +10,8 @@ from astropy.io.fits import getdata, getheader
 from astropy.time import Time
 from tqdm import tqdm
 
-from RVtools.cosmos import Planet, Star, System, Universe
-from RVtools.utils import get_data
+from RVtoImaging.cosmos import Planet, Star, System, Universe
+from RVtoImaging.utils import get_data
 
 
 def create_universe(universe_params):
@@ -261,7 +261,7 @@ class ExovistaStar(Star):
 
         # System identifiers
         self.id = obj_header["STARID"]
-        self.name = f"HIP_{obj_header['HIP']}"
+        self.name = f"HIP {obj_header['HIP']}"
 
         # System midplane information
         self.midplane_PA = (obj_header["PA"] * u.deg).to(u.rad)  # Position angle
