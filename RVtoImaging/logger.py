@@ -22,3 +22,5 @@ file_handler.setFormatter(file_formatter)
 
 logger.addHandler(shell_handler)
 logger.addHandler(file_handler)
+
+logger.propagate = False

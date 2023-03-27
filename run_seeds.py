@@ -26,15 +26,24 @@ if __name__ == "__main__":
     ######################################################################
     # Set up universe generation
     ######################################################################
-    builder.universe_params = {
-        "universe_type": "exosims",
-        "script": "test.json",
-    }
     # builder.universe_params = {
     #     "universe_type": "exosims",
-    #     "data_path": "data/",
-    #     "universe_number": 1,
+    #     "script": "test.json",
     # }
+    builder.universe_params = {
+        "universe_type": "exovista",
+        "data_path": ".cache/data/",
+        "universe_number": 0,
+    }
+
+    ######################################################################
+    # Orbit fitting
+    ######################################################################
+    builder.rv_fits_params = {
+        "fitting_method": "rvsearch",
+        "max_planets": 4,
+        "vary_planets": np.inf,
+    }
 
     ######################################################################
     # Set up precursor observation information
@@ -56,18 +65,21 @@ if __name__ == "__main__":
     simple_sigma_terms = {"rv": 2 * u.m / u.s}
     simple_observation_scheme = {
         "type": "random",
-        "observations_per_star_per_year": 15,
+        "observations_per_star_per_year": 10,
         "bad_weather_prob": 0.0,
         "exposure_time": 30 * u.min,
-        "astroplan_constraints": [AtNightConstraint.twilight_astronomical()],
+        "astroplan_constraints": [
+            AtNightConstraint.twilight_astronomical(),
+            AirmassConstraint(min=1, max=1.5),
+        ],
     }
-    # Kinda simulating HIRES which is at Keck
+    # Kinda simulating HIRES which at Keck
     simple_run = {
         "name": "2 m/s instruments",
         "location": "W. M. Keck Observatory",
         "timezone": "US/Hawaii",
-        "start_time": Time(2028, format="decimalyear"),
-        "end_time": mission_start,
+        "start_time": Time(2010, format="decimalyear"),
+        "end_time": Time(2035, format="decimalyear"),
         "sigma_terms": simple_sigma_terms,
         "observation_scheme": simple_observation_scheme,
     }
@@ -84,27 +96,70 @@ if __name__ == "__main__":
         "type": "constraint",
         "bad_weather_prob": 0,
         "obs_night_schedule": "random",
-        "n_obs_nights": 30,
-        "min_observations_per_star_per_year": 20,
-        # "slew_overhead": 180 * u.s,
+        "n_obs_nights": 24,
         "exposure_time": 20 * u.min,
         "astroplan_constraints": [
             AtNightConstraint.twilight_astronomical(),
             AirmassConstraint(min=1, max=1.5),
         ],
     }
+
     NETS_run = {
         "name": "NETS",
         "location": "Kitt Peak",
         "timezone": "US/Mountain",
-        "start_time": Time(2038, format="decimalyear"),
-        "end_time": mission_start,
+        "start_time": Time(2023, format="decimalyear"),
+        "end_time": Time(2028, format="decimalyear"),
         "observation_scheme": NETS_observation_scheme,
         "sigma_terms": NETS_sigma_terms,
     }
+
+    # UPGRADE TO NEID
+    NEID_upgrade_run_1 = {
+        "name": "NEID 50cm/s",
+        "location": "Kitt Peak",
+        "timezone": "US/Mountain",
+        "start_time": Time(2030, format="decimalyear"),
+        "end_time": Time(2035, format="decimalyear"),
+        "observation_scheme": NETS_observation_scheme,
+        "sigma_terms": {"sigma_rv": 0.5 * u.m / u.s},
+    }
+
+    NEID_upgrade_run_2 = {
+        "name": "NEID 40cm/s",
+        "location": "Kitt Peak",
+        "timezone": "US/Mountain",
+        "start_time": Time(2038, format="decimalyear"),
+        "end_time": Time(2043, format="decimalyear"),
+        "observation_scheme": NETS_observation_scheme,
+        "sigma_terms": {"sigma_rv": 0.4 * u.m / u.s},
+    }
+
+    # EPRV observation run
+    EPRV_observation_scheme = {
+        "type": "constraint",
+        "bad_weather_prob": 0,
+        "obs_night_schedule": "random",
+        "n_obs_nights": 24,
+        "exposure_time": 20 * u.min,
+        "astroplan_constraints": [
+            AtNightConstraint.twilight_astronomical(),
+            AirmassConstraint(min=1, max=1.5),
+        ],
+    }
+
+    EPRV_run = {
+        "name": "EPRV",
+        "location": "W. M. Keck Observatory",
+        "timezone": "US/Hawaii",
+        "start_time": Time(2038, format="decimalyear"),
+        "end_time": Time(2043, format="decimalyear"),
+        "observation_scheme": EPRV_observation_scheme,
+        "sigma_terms": {"sigma_rv": 0.1 * u.m / u.s},
+    }
     observing_runs = [simple_run]
     # observing_runs = [simple_run, NETS_run]
-    approx_systems_to_observe = 35
+    approx_systems_to_observe = 84
     target_list_constraints = {"": ""}
     # builder.rv_dataset_params = {
     #     "dataset_name": "simple",
@@ -112,26 +167,22 @@ if __name__ == "__main__":
     #     "available_targets_file": ".cache/NETS100.csv",
     #     "approx_systems_to_observe": approx_systems_to_observe,
     # }
-    builder.rv_dataset_params = {
-        "dataset_name": "NETS",
-        "rv_observing_runs": [simple_run, NETS_run],
-        "available_targets_file": ".cache/NETS100.csv",
-        "approx_systems_to_observe": approx_systems_to_observe,
-    }
+    conservative = [simple_run, NETS_run, NEID_upgrade_run_1, NEID_upgrade_run_2]
+    optimistic = [simple_run, NETS_run, NEID_upgrade_run_1, EPRV_run]
+    run_sets = [conservative, optimistic]
 
-    ######################################################################
-    # Orbit fitting
-    ######################################################################
-    builder.rv_fits_params = {
-        "fitting_method": "rvsearch",
-        "max_planets": 4,
-        "vary_planets": np.inf,
-    }
+    for observing_runs in run_sets:
+        builder.rv_dataset_params = {
+            "dataset_name": "NETS",
+            "rv_observing_runs": observing_runs,
+            "available_targets_file": ".cache/NETS100.csv",
+            "approx_systems_to_observe": approx_systems_to_observe,
+        }
 
-    # RUN THE SEEDS
-    seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
-    builder.seeds = seeds
-    builder.run_seeds()
+        # RUN THE SEEDS
+        seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
+        builder.seeds = seeds
+        builder.run_seeds()
     ######################################################################
     # Probability of detection
     ######################################################################

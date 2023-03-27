@@ -24,7 +24,7 @@ def runcmd(cmd, verbose=False):
     pass
 
 
-def get_data(universes=np.arange(1, 13)):
+def get_data(universes=np.arange(1, 13), cache_location="data"):
     """
     This function gets all the exoVista data. It gets the csv file with the universe
     information and puts it in the "data/{universe_number}/target_database.csv".
@@ -37,10 +37,13 @@ def get_data(universes=np.arange(1, 13)):
             "https://ckan-files.emac.gsfc.nasa.gov/"
             f"exovista/DEC21/{n}/target_database.csv"
         )
-        Path(f"data/{n}/").mkdir(parents=True, exist_ok=True)
-        if not Path(f"data/{n}/target_database.csv").exists():
+        Path(cache_location, str(n)).mkdir(parents=True, exist_ok=True)
+        if not Path(cache_location, str(n), "target_database.csv").exists():
             runcmd(f"wget --directory-prefix=data/{n} {universe_url}", verbose=False)
-        df = pd.read_csv(f"data/{n}/target_database.csv", low_memory=False)
+
+        df = pd.read_csv(
+            Path(cache_location, str(n), "target_database.csv"), low_memory=False
+        )
         for i in tqdm(
             np.arange(1, df.shape[0]), position=1, desc="System", leave=False
         ):
@@ -48,7 +51,7 @@ def get_data(universes=np.arange(1, 13)):
             fit_url = df.at[i, "URL"]
 
             # Create file path
-            file_path = Path(f"data/{n}/{fit_url.split('/')[-1]}")
+            file_path = Path(cache_location, str(n), f"{fit_url.split('/')[-1]}")
 
             # If file doesn't exist then pull it
             if not file_path.exists():

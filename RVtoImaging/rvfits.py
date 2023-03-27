@@ -188,6 +188,12 @@ class RVFits:
                     universe_str = "in universe 1 of 1. "
                 logger.info(
                     (
+                        f"{star_name} has {rv_df.shape[0]} RV observations from "
+                        f"observing runs {np.unique(rv_df.tel)}"
+                    )
+                )
+                logger.info(
+                    (
                         f"Searching {star_name} for up to {max_planets} planets. "
                         f"Star {i+1} of {len(self.systems_to_fit)} "
                         f"{universe_str}"

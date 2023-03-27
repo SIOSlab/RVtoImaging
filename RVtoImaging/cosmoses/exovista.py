@@ -19,7 +19,7 @@ def create_universe(universe_params):
     un = universe_params["universe_number"]
     full_path = f"{data_path}/{un}"
     if not Path(full_path).exists():
-        get_data([un])
+        get_data([un], data_path)
     universe = ExovistaUniverse(full_path, cache=True)
     return universe
 
@@ -130,7 +130,6 @@ class ExovistaPlanet(Planet):
     """
 
     def __init__(self, infile, fits_ext, star):
-
         # Get the object's data from the fits file
         with open(infile, "rb") as f:
             obj_data, obj_header = getdata(f, ext=fits_ext, header=True, memmap=False)
@@ -241,7 +240,6 @@ class ExovistaStar(Star):
     """
 
     def __init__(self, infile):
-
         # Get the object's data from the fits file
         with open(infile, "rb") as f:
             obj_data, obj_header = getdata(f, ext=3, header=True, memmap=False)

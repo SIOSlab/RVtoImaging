@@ -167,7 +167,7 @@ class RVtoImaging:
         new_params = {}
         # delete_tmp = False
         # original_script = universe_params["script"]
-        if "script" in universe_params.keys():
+        if universe_type == "exosims":
             # Add exosims parameters into the universe params
             necessary_EXOSIMS_keys = [
                 "fixedPlanPerStar",
@@ -227,6 +227,9 @@ class RVtoImaging:
             # Add EXOSIMS version number
             new_params["release"] = importlib.metadata.version("EXOSIMS")
             universe_spec.update(new_params)
+        elif universe_type == "exovista":
+            if "forced_seed" in universe_params.keys():
+                universe_params["universe_number"] = universe_params["forced_seed"]
 
         # Remove exosims script name if given, will probably be better as a
         # list of keys
