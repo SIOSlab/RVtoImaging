@@ -3,7 +3,7 @@ from pathlib import Path
 
 import astropy.units as u
 import numpy as np
-from astroplan import AtNightConstraint
+from astroplan import AirmassConstraint, AtNightConstraint
 from astropy.time import Time
 
 from RVtoImaging.builder import BaseBuilder
@@ -55,16 +55,18 @@ if __name__ == "__main__":
     # observations at 2 m/s by various instruments
     simple_sigma_terms = {"rv": 2 * u.m / u.s}
     simple_observation_scheme = {
-        "type": "simple",
+        "type": "random",
         "observations_per_star_per_year": 15,
         "bad_weather_prob": 0.0,
+        "exposure_time": 30 * u.min,
         "astroplan_constraints": [AtNightConstraint.twilight_astronomical()],
     }
     # Kinda simulating HIRES which is at Keck
     simple_run = {
         "name": "2 m/s instruments",
         "location": "W. M. Keck Observatory",
-        "start_time": mission_start - 15 * u.yr,
+        "timezone": "US/Hawaii",
+        "start_time": Time(2028, format="decimalyear"),
         "end_time": mission_start,
         "sigma_terms": simple_sigma_terms,
         "observation_scheme": simple_observation_scheme,
@@ -81,15 +83,21 @@ if __name__ == "__main__":
     NETS_observation_scheme = {
         "type": "constraint",
         "bad_weather_prob": 0,
-        "min_observations_per_star_per_year": 30,
-        "slew_overhead": 180 * u.s,
-        "exposure_time": "given",
-        "astroplan_constraints": [AtNightConstraint.twilight_astronomical()],
+        "obs_night_schedule": "random",
+        "n_obs_nights": 30,
+        "min_observations_per_star_per_year": 20,
+        # "slew_overhead": 180 * u.s,
+        "exposure_time": 20 * u.min,
+        "astroplan_constraints": [
+            AtNightConstraint.twilight_astronomical(),
+            AirmassConstraint(min=1, max=1.5),
+        ],
     }
     NETS_run = {
         "name": "NETS",
         "location": "Kitt Peak",
-        "start_time": mission_start - 5 * u.yr,
+        "timezone": "US/Mountain",
+        "start_time": Time(2038, format="decimalyear"),
         "end_time": mission_start,
         "observation_scheme": NETS_observation_scheme,
         "sigma_terms": NETS_sigma_terms,
@@ -98,9 +106,15 @@ if __name__ == "__main__":
     # observing_runs = [simple_run, NETS_run]
     approx_systems_to_observe = 35
     target_list_constraints = {"": ""}
+    # builder.rv_dataset_params = {
+    #     "dataset_name": "simple",
+    #     "rv_observing_runs": [simple_run],
+    #     "available_targets_file": ".cache/NETS100.csv",
+    #     "approx_systems_to_observe": approx_systems_to_observe,
+    # }
     builder.rv_dataset_params = {
-        "dataset_name": "Simple",
-        "rv_observing_runs": [simple_run],
+        "dataset_name": "NETS",
+        "rv_observing_runs": [simple_run, NETS_run],
         "available_targets_file": ".cache/NETS100.csv",
         "approx_systems_to_observe": approx_systems_to_observe,
     }

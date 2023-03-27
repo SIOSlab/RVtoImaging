@@ -8,8 +8,10 @@ import astropy.units as u
 import dill
 import numpy as np
 import pandas as pd
+import pytz
 from astroplan import Observer, observability_table
 from astropy.time import Time
+from ortools.sat.python import cp_model
 from tqdm import tqdm
 
 from RVtoImaging.logger import logger
@@ -23,7 +25,7 @@ class RVObservingRun:
 
     def __init__(self, run_params, universe):
         # Observing run name
-        self.name = run_params["name"]
+        self.name = run_params["name"].replace(" ", "_").replace("/", "")
 
         # Dictionary with the observation scheduling information for this run
         self.obs_scheme = run_params["observation_scheme"]
@@ -31,13 +33,22 @@ class RVObservingRun:
         # The terms used to calculate sigma_rv fot this observing run
         self.sigma_terms = run_params["sigma_terms"]
 
-        # Survey start/end times
-        self.start_time = run_params["start_time"]
-        self.end_time = run_params["end_time"]
-
         # Must be a site name from astropy.coordinates.EarthLocation.get_site_names(),
         # or None if using the simple observing scheme
         self.location = run_params["location"]
+        # Easiest way to use this is to run
+        # TimeQuantity.to_datetime(pytz.timezone('utc')).astimezone(self.timezone)
+        self.timezone = pytz.timezone(run_params["timezone"])
+
+        # Survey start/end times
+        self.start_time = Time(
+            self.timezone.localize(run_params["start_time"].to_datetime())
+        )
+        self.end_time = Time(
+            self.timezone.localize(run_params["end_time"].to_datetime())
+        )
+        # self.start_time = run_params["start_time"]
+        # self.end_time = run_params["end_time"]
 
         if "target_df" in run_params.keys():
             self.target_df = run_params["target_df"]
@@ -47,6 +58,7 @@ class RVObservingRun:
             "start_time": self.start_time.decimalyear,
             "end_time": self.end_time.decimalyear,
             "location": self.location,
+            "timezone": run_params["timezone"],
         }
 
         # Add the sigma terms
@@ -72,17 +84,19 @@ class RVObservingRun:
         self.runhash = hashlib.sha1(
             json.dumps(self.spec, sort_keys=True).encode("UTF-8")
         ).hexdigest()[:8]
+        self.run_name = self.name + "_" + self.runhash
         self.run_path = Path(
-            run_params["universe_dir"], "obs_runs", f"{self.runhash}.p"
+            run_params["universe_dir"], "obs_runs", f"{self.run_name}.p"
         )
         if self.run_path.exists():
+            logger.info(f"Loading the {self.name} observing run from {self.run_path}")
             with open(self.run_path, "rb") as f:
                 prev_calc = dill.load(f)
             self.target_df = prev_calc.target_df
             self.observations = prev_calc.observations
         else:
             # Create astroplan observer object at location
-            self.observer = Observer.at_site(self.location)
+            self.observer = Observer.at_site(self.location, timezone=self.timezone)
 
             # Create observation schedule
             self.create_observation_schedule()
@@ -98,15 +112,21 @@ class RVObservingRun:
     def create_observation_schedule(self):
         """
         Creates an observation schedule according to the observation scheme set
+        Adds all observation times to the self.target_df DataFrame
         """
         # Calculate which nights the stars are observable given the time frame
         # Maybe set this up with the times value instead of time_range?
-        logger.info("Creating observability table for the RV target stars.")
+        logger.info(
+            "Creating observability table for the RV target stars from "
+            f"{self.start_time.decimalyear:.2f} to {self.end_time.decimalyear:.2f} "
+            f"for {self.name} observing run."
+        )
         self.observability_table = observability_table(
             self.obs_scheme["astroplan_constraints"],
             self.observer,
             self.target_df.target.tolist(),
             time_range=[self.start_time, self.end_time],
+            time_grid_resolution=self.obs_scheme["exposure_time"],
         )
 
         # Create the years available so that we can assign observations
@@ -115,6 +135,16 @@ class RVObservingRun:
         intermediate_years = np.arange(
             modf(self.start_time.decimalyear)[1] + 1, modf(self.end_time.decimalyear)[1]
         )
+
+        # Localize to the timezone, man do I hate timezones
+        intermediate_years = [
+            Time(
+                self.timezone.localize(
+                    Time(year, format="decimalyear", scale="utc").to_datetime()
+                )
+            ).decimalyear
+            for year in intermediate_years
+        ]
 
         # Array that goes [2000.5, 2001, 2002, ..., 2014, 2014.2] for a
         # observing run with start_time=2000.5 and end_time = 2014.2
@@ -128,16 +158,8 @@ class RVObservingRun:
             ),
             format="decimalyear",
         )
-        year_blocks = pd.DataFrame(
+        self.year_blocks = pd.DataFrame(
             {"start": dates[:-1].decimalyear, "end": dates[1:].decimalyear}
-        )
-
-        # calculate the number of observations per year, most years
-        # will have nobs observations, but this accounts for the first
-        # and last years
-        nobs = self.obs_scheme["observations_per_star_per_year"]
-        year_blocks["observations"] = round(
-            (year_blocks["end"] - year_blocks["start"]) * nobs
         )
 
         # The times observability is calculated at
@@ -145,12 +167,132 @@ class RVObservingRun:
         times_jd = times.jd
         times_year = times.decimalyear
         all_observations = []
-
+        logger.info(f"Creating observation times for {self.name} targets")
         # Create the observation schedule
         match (self.obs_scheme["type"]):
-            case "simple":
-                # Create observation schedule for the targets
-                logger.info(f"Creating observation times for {self.name} targets")
+            case "constraint":
+                # Set up which nights are available for observing
+                obs_nights = self.schedule_observing_nights()
+
+                # Get the indices of all available observation slots created
+                # in the observability table
+                all_obs_night_inds = []
+                tracking_the_night = []
+                for night in obs_nights:
+                    night_inds = np.where(np.abs(times.jd - night.jd) < 0.5)[0]
+                    for ind in night_inds:
+                        all_obs_night_inds.append(ind)
+                        tracking_the_night.append(night)
+                obs_df = pd.DataFrame(
+                    {
+                        "observation_inds": all_obs_night_inds,
+                        "nights": tracking_the_night,
+                    }
+                )
+
+                # Remove inds that have no targets detectable
+                rows_to_delete = []
+                for row_ind, (obs_ind, night) in obs_df.iterrows():
+                    # obs_time = times[obs_ind]
+                    if ~np.any(
+                        self.observability_table["always observable"][:, obs_ind]
+                    ):
+                        rows_to_delete.append(row_ind)
+                        # useful_inds.append(obs_ind)
+                        # useful_inds_nights.append(night)
+                reduced_obs_df = obs_df.drop(index=rows_to_delete).reset_index(
+                    drop=True
+                )
+
+                # This is a horrific 'oneliner' that creates a dictionary where every
+                # key is a night and the value for the key is an array of all
+                # the time indices that correspond to a time when an observation can be
+                # made on that night
+                night_slots_dict = {
+                    night: reduced_obs_df.loc[
+                        reduced_obs_df.nights == night
+                    ].observation_inds.values
+                    for night in np.unique(reduced_obs_df.nights)
+                }
+
+                # Goal is to now make the best schedule we can
+                model = cp_model.CpModel()
+
+                # Making iterating easier
+                targets = self.target_df.HIP.values
+                valid_nights = list(night_slots_dict.keys())
+
+                # Create the decision variables
+                obs_assignments = {}
+                for target in targets:
+                    for night in valid_nights:
+                        for slot in night_slots_dict[night]:
+                            obs_assignments[(target, night, slot)] = model.NewBoolVar(
+                                f"{target}_{night.jd:.2f}_{slot}"
+                            )
+
+                # Make sure each observation is only assigned to at most one target
+                for night in valid_nights:
+                    for slot in night_slots_dict[night]:
+                        model.AddAtMostOne(
+                            obs_assignments[(target, night, slot)] for target in targets
+                        )
+
+                # Make sure each target is observed at most once per night
+                for target in targets:
+                    for night in valid_nights:
+                        model.AddAtMostOne(
+                            obs_assignments[(target, night, slot)]
+                            for slot in night_slots_dict[night]
+                        )
+
+                # Objective function, simply maximize the number of observations
+                # made subject to the previous constraints
+                model.Maximize(
+                    sum(
+                        obs_assignments[(target, night, slot)]
+                        for target in targets
+                        for night in valid_nights
+                        for slot in night_slots_dict[night]
+                    )
+                )
+
+                logger.info(f"Creating optimal observation schedule for {self.name}")
+                solver = cp_model.CpSolver()
+                status = solver.Solve(model)
+                if status == cp_model.OPTIMAL:
+                    n_target_observations = []
+                    for target in targets:
+                        target_observations = []
+                        for night in valid_nights:
+                            for slot in night_slots_dict[night]:
+                                if (
+                                    solver.Value(obs_assignments[(target, night, slot)])
+                                    == 1
+                                ):
+                                    target_observations.append(times_jd[slot])
+                        n_target_observations.append(len(target_observations))
+                        all_observations.append(Time(target_observations, format="jd"))
+                    self.target_df["n_observations"] = n_target_observations
+                    self.target_df["observations"] = all_observations
+
+                    targets_observed = sum((self.target_df.n_observations.values > 1))
+                    logger.info(
+                        f"Optimal schedule found, observing {targets_observed} "
+                        "stars at least once."
+                    )
+                else:
+                    raise RuntimeError(
+                        f"No optimal schedule possible for {self.name} observing run."
+                    )
+            case "random":
+                # Calculate the number of observations per year, most years
+                # will have nobs observations, but this accounts for the first
+                # and last years
+                nobs = self.obs_scheme["observations_per_star_per_year"]
+                self.year_blocks["n_observations"] = round(
+                    (self.year_blocks["end"] - self.year_blocks["start"]) * nobs
+                )
                 for _, target in tqdm(
                     self.target_df.iterrows(),
                     total=len(self.target_df),
@@ -167,10 +309,13 @@ class RVObservingRun:
                     target_observability = self.observability_table[obs_table_ind]
 
                     # List to keep track of all the observations
-                    target_observations = np.zeros(int(year_blocks.observations.sum()))
+                    # target_observations = np.zeros(
+                    #     int(year_blocks.n_observations.sum())
+                    # )
+                    target_observations = []
 
                     n_obs = 0
-                    for _, block in year_blocks.iterrows():
+                    for _, block in self.year_blocks.iterrows():
                         # Get the observation times inside this block (observing year)
                         in_block = (block.end > times_year) & (
                             times_year >= block.start
@@ -178,14 +323,14 @@ class RVObservingRun:
 
                         # The array of observations to be made in this block
                         block_observations = Time(
-                            np.zeros(int(block.observations)), format="jd"
+                            np.zeros(int(block.n_observations)), format="jd"
                         )
 
                         # This keeps track of which observation times are too
                         # close to an already scheduled observation
                         time_removed = np.zeros(len(times), dtype=bool)
 
-                        for obs_ind in range(int(block.observations)):
+                        for obs_ind in range(int(block.n_observations)):
                             # Get array of observations available
                             available_observation_inds = np.where(
                                 target_observability["always observable"]
@@ -210,136 +355,169 @@ class RVObservingRun:
                                 np.abs(observation_time.jd - times_jd) < 0.5
                             )[0]
                             time_removed[close_inds] = True
+
+                        # Randomly calculate bad weather and remove
+                        # observations based on it
+                        bad_weather_nights = (
+                            np.array(
+                                [random() for _ in range(int(block.n_observations))]
+                            )
+                            < self.obs_scheme["bad_weather_prob"]
+                        )
+                        block_observations = block_observations[~bad_weather_nights]
+
+                        # Add the observations to the target_observation list
                         for observation in sorted(block_observations):
-                            target_observations[n_obs] = observation.jd
+                            target_observations.append(observation.jd)
                             n_obs += 1
+
                     all_observations.append(Time(target_observations, format="jd"))
                 self.target_df["observations"] = all_observations
-            case "constraint":
-                # Set up which nights are available for observing
-                self.schedule_observing_nights()
-
-                # Determine target observability for all possible nights
-                self.calc_observability()
 
     def schedule_observing_nights(self):
+        """
+        Create a schedule of which nights are to be observed each year
+        and return it as
+
+        Note: a night is specified at midnight (assuming the initial start time
+        is at midnight) for self.timezone but stored as utc. A night extends for
+        12 hours in either direction. So the night of 2038-01-01 00:00:00 includes
+        all times between 2037-12-31 12:00:00 - 2038-01-01 12:00:00.
+        """
         # In more complicated observing schemes we schedule the nights
         # first and then assign observations based on them
-        breakpoint()
+        obs_nights = []
+        if self.obs_scheme["obs_night_schedule"] == "random":
+            # For the random case we randomly sample from all nights in the
+            # year according to the specified "n_obs_nights" parameter
+            for _, block in self.year_blocks.iterrows():
+                start_quantity = Time(block.start, format="decimalyear")
+                end_quantity = Time(block.end, format="decimalyear")
+                block_dates = np.arange(start_quantity.jd, end_quantity.jd, 1)
 
-    def generate_available_rv_times(self):
-        """
-        Based on the timing format set up the rv times available for
-        observation
-        """
-        # if self.timing_format == "fixed":
-        #     # If fixed then we already set it in init
-        #     pass
-
-        # elif self.timing_format == "Poisson":
-        #     current_time = Time(self.start_time.jd, format="jd")
-        #     times_list = []
-        #     time_is_valid = True
-        #     while time_is_valid:
-        #         # Generate spacing between observations with expovariate
-        #         # function to match a Poisson process
-        #         time_until_next_observation = expovariate(self.rate)
-        #         current_time += time_until_next_observation
-
-        #         # Check if we've exceeded the maximum time allowed
-        #         if current_time >= self.end_time:
-        #             time_is_valid = False
-        #         else:
-        #             times_list.append(current_time.jd)
-
-        #     # Save to final format
-        #     self.rv_times = Time(times_list, format="jd")
-
-        # elif self.timing_format == "equal":
-        #     # Simple linear spacing
-        #     self.rv_times = np.linspace(self.start_time, self.end_time, self.num)
-
-        nights_available = int(self.end_time.jd - self.start_time.jd)
-
-        # Generate random numbers to represent bad weather
-        # If the random number is less than the bad weather probability
-        # then it's considered a bad weather night and no observations
-        # will be taken
-        bad_weather_nights = (
-            np.array([random() for _ in range(int(nights_available))])
-            < self.bad_weather_prob
-        )
-
-        # Set observations to start at 10 pm and finish at 4 am
-        offset_to_obs_start = 10 - 24 * (modf(self.start_time.jd)[0])
-        first_obs_time = self.start_time + (offset_to_obs_start) / 24 * u.d
-        # last_obs_of_night_time = first_obs_time + 6 * u.hr
-        obs_spacing = np.linspace(0, 6 / 24, self.observations_per_night)
-        self.obs_nights = []
-        times_arr = np.array([])
-        for night, bad_weather in zip(range(nights_available), bad_weather_nights):
-            if not bad_weather:
-                # Set up times for the night
-                self.obs_nights.append(night)
-                times_arr = np.append(
-                    times_arr, (first_obs_time + night + obs_spacing).jd
+                block_obs_nights = sample(
+                    sorted(block_dates), self.obs_scheme["n_obs_nights"]
                 )
+                for obs in sorted(block_obs_nights):
+                    obs_nights.append(obs)
+            obs_nights = Time(obs_nights, format="jd")
+        else:
+            raise ValueError("This night scheduling scheme doesn't exist")
+        return obs_nights
 
-        self.rv_times = Time(times_arr, format="jd")
-        # Standardize formatting into decimalyear
-        self.rv_times.format = "decimalyear"
+    # def generate_available_rv_times(self):
+    #     """
+    #     Based on the timing format set up the rv times available for
+    #     observation
+    #     """
+    #     # if self.timing_format == "fixed":
+    #     #     # If fixed then we already set it in init
+    #     #     pass
 
-    def assign_instrument_observations(self, systems_to_observe):
-        """
-        This will assign each of the instrument's observation time to a specific
-        star.
-        """
-        # This array is holds the indices of the system(s) that will be
-        # observed at each available rv time
-        self.observation_schedule = np.zeros(len(self.rv_times), dtype=int)
-        if self.observation_scheme == "time_cluster":
-            # Necessary parameters
-            cluster_start_time = self.rv_times[0]
-            current_system_ind = 0
+    #     # elif self.timing_format == "Poisson":
+    #     #     current_time = Time(self.start_time.jd, format="jd")
+    #     #     times_list = []
+    #     #     time_is_valid = True
+    #     #     while time_is_valid:
+    #     #         # Generate spacing between observations with expovariate
+    #     #         # function to match a Poisson process
+    #     #         time_until_next_observation = expovariate(self.rate)
+    #     #         current_time += time_until_next_observation
 
-            # Used when cycling
-            n_systems = len(systems_to_observe)
+    #     #         # Check if we've exceeded the maximum time allowed
+    #     #         if current_time >= self.end_time:
+    #     #             time_is_valid = False
+    #     #         else:
+    #     #             times_list.append(current_time.jd)
 
-            # Loop over all the available observation times
-            for i, observation in enumerate(self.rv_times):
-                # Time since the cluster started
-                elapsed_time = observation - cluster_start_time
+    #     #     # Save to final format
+    #     #     self.rv_times = Time(times_list, format="jd")
 
-                # Check whether it's time to move to the next cluster of
-                # observations (e.g. it's been 1.1 days and a cluster is only 1
-                # day)
-                if elapsed_time > self.cluster_length:
-                    # Choosing next system to observe
-                    if self.cluster_choice == "cycle":
-                        current_system_ind = (current_system_ind + 1) % n_systems
-                    elif self.cluster_choice == "random":
-                        current_system_ind = choice(systems_to_observe)
+    #     # elif self.timing_format == "equal":
+    #     #     # Simple linear spacing
+    #     #     self.rv_times = np.linspace(self.start_time, self.end_time, self.num)
 
-                    # Make the current time the start time of the next cluster
-                    cluster_start_time = observation
+    #     nights_available = int(self.end_time.jd - self.start_time.jd)
 
-                self.observation_schedule[i, 0] = current_system_ind
-        elif self.observation_scheme == "survey":
-            # Observe a random set of stars each night
-            for i, _ in enumerate(self.obs_nights):
-                # Choose the targets that will be observed at every observation time
-                systems = sample(systems_to_observe, self.observations_per_night)
-                self.observation_schedule[
-                    i
-                    * self.observations_per_night : self.observations_per_night
-                    * (1 + i)
-                ] = systems
-        # breakpoint()
-        # for system_id in systems:
-        #     self.observation_schedule[i] = system_id
+    #     # Generate random numbers to represent bad weather
+    #     # If the random number is less than the bad weather probability
+    #     # then it's considered a bad weather night and no observations
+    #     # will be taken
+    #     bad_weather_nights = (
+    #         np.array([random() for _ in range(int(nights_available))])
+    #         < self.bad_weather_prob
+    #     )
 
-        # # Save schedule instrument
-        # self.observation_schedule = observation_schedule
+    #     # Set observations to start at 10 pm and finish at 4 am
+    #     offset_to_obs_start = 10 - 24 * (modf(self.start_time.jd)[0])
+    #     first_obs_time = self.start_time + (offset_to_obs_start) / 24 * u.d
+    #     # last_obs_of_night_time = first_obs_time + 6 * u.hr
+    #     obs_spacing = np.linspace(0, 6 / 24, self.observations_per_night)
+    #     self.obs_nights = []
+    #     times_arr = np.array([])
+    #     for night, bad_weather in zip(range(nights_available), bad_weather_nights):
+    #         if not bad_weather:
+    #             # Set up times for the night
+    #             self.obs_nights.append(night)
+    #             times_arr = np.append(
+    #                 times_arr, (first_obs_time + night + obs_spacing).jd
+    #             )
+
+    #     self.rv_times = Time(times_arr, format="jd")
+    #     # Standardize formatting into decimalyear
+    #     self.rv_times.format = "decimalyear"
+
+    # def assign_instrument_observations(self, systems_to_observe):
+    #     """
+    #     This will assign each of the instrument's observation time to a specific
+    #     star.
+    #     """
+    #     # This array is holds the indices of the system(s) that will be
+    #     # observed at each available rv time
+    #     self.observation_schedule = np.zeros(len(self.rv_times), dtype=int)
+    #     if self.observation_scheme == "time_cluster":
+    #         # Necessary parameters
+    #         cluster_start_time = self.rv_times[0]
+    #         current_system_ind = 0
+
+    #         # Used when cycling
+    #         n_systems = len(systems_to_observe)
+
+    #         # Loop over all the available observation times
+    #         for i, observation in enumerate(self.rv_times):
+    #             # Time since the cluster started
+    #             elapsed_time = observation - cluster_start_time
+
+    #             # Check whether it's time to move to the next cluster of
+    #             # observations (e.g. it's been 1.1 days and a cluster is only 1
+    #             # day)
+    #             if elapsed_time > self.cluster_length:
+    #                 # Choosing next system to observe
+    #                 if self.cluster_choice == "cycle":
+    #                     current_system_ind = (current_system_ind + 1) % n_systems
+    #                 elif self.cluster_choice == "random":
+    #                     current_system_ind = choice(systems_to_observe)
+
+    #                 # Make the current time the start time of the next cluster
+    #                 cluster_start_time = observation
+
+    #             self.observation_schedule[i, 0] = current_system_ind
+    #     elif self.observation_scheme == "survey":
+    #         # Observe a random set of stars each night
+    #         for i, _ in enumerate(self.obs_nights):
+    #             # Choose the targets that will be observed at every observation time
+    #             systems = sample(systems_to_observe, self.observations_per_night)
+    #             self.observation_schedule[
+    #                 i
+    #                 * self.observations_per_night : self.observations_per_night
+    #                 * (1 + i)
+    #             ] = systems
+    #     # breakpoint()
+    #     # for system_id in systems:
+    #     #     self.observation_schedule[i] = system_id
+
+    #     # # Save schedule instrument
+    #     # self.observation_schedule = observation_schedule
 
     def make_observations(self, universe):
         """

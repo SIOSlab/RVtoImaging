@@ -41,15 +41,19 @@ class RVDataset:
             # FILL IN WITH DEFAULT SETTINGS
             pass
 
+        obs_run_names = []
         self.obs_runs = []
         for obs_run_params in params["rv_observing_runs"]:
             if using_preset_targets:
                 obs_run_params["target_df"] = target_df
             obs_run_params["universe_dir"] = params["universe_dir"]
             _obs_run = RVObservingRun(obs_run_params, universe)
+            obs_run_names.append(_obs_run.run_name)
             self.obs_runs.append(_obs_run)
 
-        self.name = params["dataset_name"]
+        self.name = "runs_"
+        for run_name in sorted(obs_run_names):
+            self.name += run_name
 
         # Combine the observations into one dataframe
         for i, obs_run in enumerate(self.obs_runs):
@@ -74,7 +78,7 @@ class RVDataset:
             syst_folder = Path(
                 params["universe_dir"],
                 f"{universe.names[system_id].replace(' ', '_')}",
-                params["dataset_name"],
+                self.name,
             )
             syst_folder.mkdir(exist_ok=True, parents=True)
 
