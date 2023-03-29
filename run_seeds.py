@@ -26,15 +26,15 @@ if __name__ == "__main__":
     ######################################################################
     # Set up universe generation
     ######################################################################
-    # builder.universe_params = {
-    #     "universe_type": "exosims",
-    #     "script": "test.json",
-    # }
     builder.universe_params = {
-        "universe_type": "exovista",
-        "data_path": ".cache/data/",
-        "universe_number": 0,
+        "universe_type": "exosims",
+        "script": "test.json",
     }
+    # builder.universe_params = {
+    #     "universe_type": "exovista",
+    #     "data_path": ".cache/data/",
+    #     "universe_number": 0,
+    # }
 
     ######################################################################
     # Orbit fitting
@@ -167,9 +167,31 @@ if __name__ == "__main__":
     #     "available_targets_file": ".cache/NETS100.csv",
     #     "approx_systems_to_observe": approx_systems_to_observe,
     # }
+    baseline_sigma_terms = {"rv": 1 * u.m / u.s}
+    baseline_observation_scheme = {
+        "type": "random",
+        "observations_per_star_per_year": 10,
+        "bad_weather_prob": 0.0,
+        "exposure_time": 30 * u.min,
+        "astroplan_constraints": [
+            AtNightConstraint.twilight_astronomical(),
+            AirmassConstraint(min=1, max=1.5),
+        ],
+    }
+    # Kinda simulating HIRES which at Keck
+    baseline_run = {
+        "name": "1 m/s instruments",
+        "location": "W. M. Keck Observatory",
+        "timezone": "US/Hawaii",
+        "start_time": Time(2010, format="decimalyear"),
+        "end_time": Time(2043, format="decimalyear"),
+        "sigma_terms": baseline_sigma_terms,
+        "observation_scheme": baseline_observation_scheme,
+    }
+    baseline = [baseline_run]
     conservative = [simple_run, NETS_run, NEID_upgrade_run_1, NEID_upgrade_run_2]
     optimistic = [simple_run, NETS_run, NEID_upgrade_run_1, EPRV_run]
-    run_sets = [conservative, optimistic]
+    run_sets = [baseline, conservative, optimistic]
 
     for observing_runs in run_sets:
         builder.rv_dataset_params = {
