@@ -256,6 +256,8 @@ class RVFits:
                         "observational_baseline": obs_baseline,
                         "mcmc_success": False,
                     }
+                    # Guarantee the folder exists
+                    fit_dir.mkdir(exist_ok=True, parents=True)
                 # Save specs
                 utils.update(fit_dir, fit_spec)
             else:
