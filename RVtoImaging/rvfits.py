@@ -203,19 +203,19 @@ class RVFits:
                 )
 
                 # Run search
+                n_obs = rv_df.shape[0]
+                obs_baseline = (
+                    (
+                        Time(max(rv_df.time), format="jd")
+                        - Time(min(rv_df.time), format="jd")
+                    )
+                    .to(u.yr)
+                    .value
+                )
                 try:
                     searcher.run_search(outdir=str(fit_dir), running=False)
                     self.fits_completed += 1
 
-                    n_obs = rv_df.shape[0]
-                    obs_baseline = (
-                        (
-                            Time(max(rv_df.time), format="jd")
-                            - Time(min(rv_df.time), format="jd")
-                        )
-                        .to(u.yr)
-                        .value
-                    )
                     if searcher.mcmc_failure:
                         fit_spec = {
                             "max_planets": int(max_planets),
