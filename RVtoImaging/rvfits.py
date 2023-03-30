@@ -203,19 +203,51 @@ class RVFits:
                 )
 
                 # Run search
-                searcher.run_search(outdir=str(fit_dir), running=False)
-                self.fits_completed += 1
+                try:
+                    searcher.run_search(outdir=str(fit_dir), running=False)
+                    self.fits_completed += 1
 
-                n_obs = rv_df.shape[0]
-                obs_baseline = (
-                    (
-                        Time(max(rv_df.time), format="jd")
-                        - Time(min(rv_df.time), format="jd")
+                    n_obs = rv_df.shape[0]
+                    obs_baseline = (
+                        (
+                            Time(max(rv_df.time), format="jd")
+                            - Time(min(rv_df.time), format="jd")
+                        )
+                        .to(u.yr)
+                        .value
                     )
-                    .to(u.yr)
-                    .value
-                )
-                if searcher.mcmc_failure:
+                    if searcher.mcmc_failure:
+                        fit_spec = {
+                            "max_planets": int(max_planets),
+                            "planets_fitted": 0,
+                            "mcmc_converged": False,
+                            "observations": int(n_obs),
+                            "observational_baseline": obs_baseline,
+                            "mcmc_success": False,
+                        }
+                        logger.warning(f"Failure to run MCMC on {star_name}.")
+                    else:
+                        # Save specifications of the orbit fit
+                        planets_fitted = searcher.post.params.num_planets
+                        fit_spec = {
+                            "max_planets": int(max_planets),
+                            "planets_fitted": int(planets_fitted),
+                            "mcmc_converged": bool(searcher.mcmc_converged),
+                            "observations": int(n_obs),
+                            "observational_baseline": obs_baseline,
+                            "mcmc_success": True,
+                        }
+                        logger.info(
+                            f"Found {planets_fitted} planets around {star_name}."
+                        )
+                        if searcher.num_planets > 0:
+                            # Create a system from the fitted planets
+                            fitted_system = FitSystem(searcher, system)
+                            with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
+                                pickle.dump(fitted_system, f)
+
+                except BaseException:
+                    logger.warning(f"failure in RVSearch on {star_name}")
                     fit_spec = {
                         "max_planets": int(max_planets),
                         "planets_fitted": 0,
@@ -224,25 +256,6 @@ class RVFits:
                         "observational_baseline": obs_baseline,
                         "mcmc_success": False,
                     }
-                    logger.warning(f"Failure to run MCMC on {star_name}.")
-                else:
-                    # Save specifications of the orbit fit
-                    planets_fitted = searcher.post.params.num_planets
-                    fit_spec = {
-                        "max_planets": int(max_planets),
-                        "planets_fitted": int(planets_fitted),
-                        "mcmc_converged": bool(searcher.mcmc_converged),
-                        "observations": int(n_obs),
-                        "observational_baseline": obs_baseline,
-                        "mcmc_success": True,
-                    }
-                    logger.info(f"Found {planets_fitted} planets around {star_name}.")
-                    if searcher.num_planets > 0:
-                        # Create a system from the fitted planets
-                        fitted_system = FitSystem(searcher, system)
-                        with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
-                            pickle.dump(fitted_system, f)
-
                 # Save specs
                 utils.update(fit_dir, fit_spec)
             else:
