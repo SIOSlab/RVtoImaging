@@ -85,6 +85,7 @@ class RVDataset:
             # Save the specification for the observations in a json for easier
             # parsing
             obs_spec = {}
+            obs_spec["rv_dataset"] = params["dataset_name"]
             obs_spec["number_of_observations_all_obs_runs"] = syst_obs.shape[0]
             # obs_spec["obs_baseline_all_instruments"] = (
             #     syst_obs.iloc[np.argmax(syst_obs.t_year)].t_year

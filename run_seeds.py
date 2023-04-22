@@ -191,20 +191,37 @@ if __name__ == "__main__":
     baseline = [baseline_run]
     conservative = [simple_run, NETS_run, NEID_upgrade_run_1, NEID_upgrade_run_2]
     optimistic = [simple_run, NETS_run, NEID_upgrade_run_1, EPRV_run]
-    run_sets = [baseline, conservative, optimistic]
+    run_sets = {
+        "conservative": conservative,
+        "baseline": baseline,
+        "optimistic": optimistic,
+    }
 
-    for observing_runs in run_sets:
-        builder.rv_dataset_params = {
-            "dataset_name": "NETS",
-            "rv_observing_runs": observing_runs,
-            "available_targets_file": ".cache/NETS100.csv",
-            "approx_systems_to_observe": approx_systems_to_observe,
-        }
+    # for observing_runs in run_sets:
+    #     builder.rv_dataset_params = {
+    #         "dataset_name": "NETS",
+    #         "rv_observing_runs": observing_runs,
+    #         "available_targets_file": ".cache/NETS100.csv",
+    #         "approx_systems_to_observe": approx_systems_to_observe,
+    #     }
+
+    #     # RUN THE SEEDS
+    #     seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
+    #     builder.seeds = seeds
+    #     builder.run_seeds()
+    seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
+    for seed in seeds:
+        builder.seeds = [seed]
+        for dataset_name, obs_runs in run_sets.items():
+            builder.rv_dataset_params = {
+                "dataset_name": dataset_name,
+                "rv_observing_runs": obs_runs,
+                "available_targets_file": ".cache/NETS100.csv",
+                "approx_systems_to_observe": approx_systems_to_observe,
+            }
+            builder.run_seeds()
 
         # RUN THE SEEDS
-        seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
-        builder.seeds = seeds
-        builder.run_seeds()
     ######################################################################
     # Probability of detection
     ######################################################################
