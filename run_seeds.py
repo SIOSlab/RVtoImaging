@@ -20,6 +20,7 @@ def run_scenario(args):
     builder = copy.deepcopy(builder)
     builder.seeds = [seed]
     for dataset_name, obs_runs in run_sets.items():
+        print(f"Seed {seed} for {dataset_name} dataset")
         builder.rv_dataset_params = {
             "dataset_name": dataset_name,
             "rv_observing_runs": obs_runs,
