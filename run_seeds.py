@@ -1,6 +1,5 @@
 import copy
 import json
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import astropy.units as u
@@ -237,28 +236,27 @@ if __name__ == "__main__":
         "optimistic": optimistic,
     }
 
-    # for observing_runs in run_sets:
-    #     builder.rv_dataset_params = {
-    #         "dataset_name": "NETS",
-    #         "rv_observing_runs": observing_runs,
-    #         "available_targets_file": ".cache/NETS100.csv",
-    #         "approx_systems_to_observe": approx_systems_to_observe,
-    #     }
-
-    #     # RUN THE SEEDS
-    #     seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
-    #     builder.seeds = seeds
-    #     builder.run_seeds()
     seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
-    args = []
+
     for seed in seeds:
-        args.append((seed, builder, run_sets))
+        builder.seeds = [seed]
+        for dataset_name, obs_runs in run_sets.items():
+            builder.rv_dataset_params = {
+                "dataset_name": dataset_name,
+                "rv_observing_runs": obs_runs,
+                "available_targets_file": ".cache/NETS100.csv",
+                "approx_systems_to_observe": approx_systems_to_observe,
+            }
+            builder.run_seeds()
+    # args = []
+    # for seed in seeds:
+    #     args.append((seed, builder, run_sets))
 
     # all_args = list(itertools.product(seeds, [builder], run_sets.items()))
     # tasks = itertools.starmap(run_scenario, args)
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        #     args = [seed, builder, run_sets]
-        executor.map(run_scenario, args)
+    # with ThreadPoolExecutor(max_workers=threads) as executor:
+    #     #     args = [seed, builder, run_sets]
+    #     executor.map(run_scenario, args)
     # runs = [
     #     Path(
     #         "runs_2_ms_instruments_0330de54EPRV_42694d12NEID_50cms_b083fb86NETS_56a937d6"
@@ -269,17 +267,6 @@ if __name__ == "__main__":
     # ]
     # with ThreadPoolExecutor(max_workers=1) as executor:
     #     executor.map(run_search, runs)
-
-    # for seed in seeds:
-    #     builder.seeds = [seed]
-    #     for dataset_name, obs_runs in run_sets.items():
-    #         builder.rv_dataset_params = {
-    #             "dataset_name": dataset_name,
-    #             "rv_observing_runs": obs_runs,
-    #             "available_targets_file": ".cache/NETS100.csv",
-    #             "approx_systems_to_observe": approx_systems_to_observe,
-    #         }
-    #         builder.run_seeds()
 
     # RUN THE SEEDS
     ######################################################################
