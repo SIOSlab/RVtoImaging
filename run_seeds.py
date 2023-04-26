@@ -244,7 +244,7 @@ if __name__ == "__main__":
             builder.rv_dataset_params = {
                 "dataset_name": dataset_name,
                 "rv_observing_runs": obs_runs,
-                "available_targets_file": ".cache/NETS100.csv",
+                "available_targets_file": f"{cache_dir}/NETS100.csv",
                 "approx_systems_to_observe": approx_systems_to_observe,
             }
             builder.run_seeds()
