@@ -1,3 +1,4 @@
+import bz2
 import json
 import pickle
 from pathlib import Path
@@ -7,6 +8,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 sim_script = "../test.json"
 seed_range = range(30, 45)
@@ -21,7 +23,7 @@ rv_terms = [
     "magnetic",
 ]
 
-tphon_df = pd.read_pickle("df.p")
+tphon_df = pd.read_pickle("tphon_df.p")
 
 # Load the EXOSIMS script being used
 with open(sim_script, "r") as f:
@@ -41,7 +43,7 @@ relevant_params = {
 if not Path("local_df.p").exists():
     es_universes = []
     all_info = []
-    for un in all_universes:
+    for un in tqdm(all_universes, desc="Universe", position=0, leave=True):
         if Path(un, "spec.json").exists():
             with open(Path(un, "spec.json"), "r") as f:
                 _spec = json.load(f)
@@ -65,18 +67,18 @@ if not Path("local_df.p").exists():
                 # Go through and check the fitting status of the stars
                 star_glob = Path(un).glob("HIP_*")
                 stars = [x for x in star_glob if x.is_dir()]
-                for star in stars:
+                for star in tqdm(stars, desc="Stars", position=1, leave=False):
                     surveys = [x for x in Path(star).glob("*") if x.is_dir()]
                     for survey in surveys:
                         _obs_spec = Path(survey, "obs_spec.json")
                         _obs_data = Path(survey, "rv.csv")
-                        _fit_spec = Path(survey, "4_depth", "spec.json")
-                        if _fit_spec.exists():
+                        fit_spec_path = Path(survey, "4_depth", "spec.json")
+                        if fit_spec_path.exists():
                             # If the fit has been done then we catalog it
                             with open(_obs_spec, "r") as f:
                                 obs_spec = json.load(f)
                             obs_data = pd.read_csv(_obs_data)
-                            with open(_fit_spec, "r") as f:
+                            with open(fit_spec_path, "r") as f:
                                 fit_spec = json.load(f)
                             info = []
                             if dataset_name := obs_spec.get("rv_dataset"):
@@ -115,15 +117,41 @@ if not Path("local_df.p").exists():
                                     fit_info["mcmc_success"] = fit_spec.get(
                                         "mcmc_success"
                                     )
-                                    fit_info["fit_path"] = _fit_spec
+                                    fit_info["fit_path"] = fit_spec_path
+                                    csv_loc = Path(
+                                        fit_spec_path.parent, "chains.csv.tar.bz2"
+                                    )
+                                    if "min_prob" in fit_spec.keys():
+                                        fit_info["min_prob"] = fit_spec["min_prob"]
+                                    else:
+                                        if csv_loc.exists():
+                                            try:
+                                                with bz2.open(csv_loc, "rb") as f:
+                                                    chains = pd.read_csv(f)
+                                                fit_info["min_prob"] = chains.loc[
+                                                    chains.lnprobability.idxmax(),
+                                                    "lnprobability",
+                                                ]
+                                                # Store for later
+                                                fit_spec["min_prob"] = chains.loc[
+                                                    chains.lnprobability.idxmax(),
+                                                    "lnprobability",
+                                                ]
+                                                with open(fit_spec_path, "w") as f:
+                                                    json.dump(fit_spec, f)
+                                            except EOFError:
+                                                fit_info["min_prob"] = None
 
+                                        else:
+                                            fit_info["min_prob"] = None
                                     # Load the fit system
                                     system_location = Path(
-                                        _fit_spec.parent, "fitsystem.p"
+                                        fit_spec_path.parent, "fitsystem.p"
                                     )
                                     if system_location.exists():
                                         with open(
-                                            Path(_fit_spec.parent, "fitsystem.p"), "rb"
+                                            Path(fit_spec_path.parent, "fitsystem.p"),
+                                            "rb",
                                         ) as f:
                                             system = pickle.load(f)
                                         fit_info["rms_vals"] = system.getpattr(
