@@ -121,29 +121,29 @@ if not Path("local_df.p").exists():
                                     csv_loc = Path(
                                         fit_spec_path.parent, "chains.csv.tar.bz2"
                                     )
-                                    if "min_prob" in fit_spec.keys():
-                                        fit_info["min_prob"] = fit_spec["min_prob"]
+                                    if "best_prob" in fit_spec.keys():
+                                        fit_info["best_prob"] = fit_spec["best_prob"]
                                     else:
                                         if csv_loc.exists():
                                             try:
                                                 with bz2.open(csv_loc, "rb") as f:
                                                     chains = pd.read_csv(f)
-                                                fit_info["min_prob"] = chains.loc[
+                                                fit_info["best_prob"] = chains.loc[
                                                     chains.lnprobability.idxmax(),
                                                     "lnprobability",
                                                 ]
                                                 # Store for later
-                                                fit_spec["min_prob"] = chains.loc[
+                                                fit_spec["best_prob"] = chains.loc[
                                                     chains.lnprobability.idxmax(),
                                                     "lnprobability",
                                                 ]
                                                 with open(fit_spec_path, "w") as f:
                                                     json.dump(fit_spec, f)
                                             except EOFError:
-                                                fit_info["min_prob"] = None
+                                                fit_info["best_prob"] = None
 
                                         else:
-                                            fit_info["min_prob"] = None
+                                            fit_info["best_prob"] = None
                                     # Load the fit system
                                     system_location = Path(
                                         fit_spec_path.parent, "fitsystem.p"
