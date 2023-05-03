@@ -224,7 +224,7 @@ class RVFits:
                             "observations": int(n_obs),
                             "observational_baseline": obs_baseline,
                             "mcmc_success": False,
-                            "mcmc_best_prob": None,
+                            "best_prob": None,
                         }
                         logger.warning(f"Failure to run MCMC on {star_name}.")
                     else:
@@ -237,7 +237,7 @@ class RVFits:
                             "observations": int(n_obs),
                             "observational_baseline": obs_baseline,
                             "mcmc_success": True,
-                            "mcmc_best_prob": searcher.mcmc_best_prob,
+                            "best_prob": searcher.mcmc_best_prob,
                         }
                         logger.info(
                             f"Found {planets_fitted} planets around {star_name}."
@@ -257,7 +257,7 @@ class RVFits:
                         "observations": int(n_obs),
                         "observational_baseline": obs_baseline,
                         "mcmc_success": False,
-                        "mcmc_best_prob": None,
+                        "best_prob": None,
                     }
                     # Guarantee the folder exists
                     fit_dir.mkdir(exist_ok=True, parents=True)
