@@ -163,48 +163,77 @@ if not Path("local_df.p").exists():
 else:
     local_df = pd.read_pickle("local_df.p")
 
-df = pd.concat([tphon_df, local_df]).reset_index(drop=True)
+# df = pd.concat([tphon_df, local_df]).reset_index(drop=True)
+df = tphon_df
 
-# breakpoint()
-fig, ax = plt.subplots(figsize=(10, 10))
+fig, ax = plt.subplots(figsize=(20, 10))
 cmap = plt.get_cmap("viridis")
 universes = np.unique(df.universe)
 colors = [cmap(val) for val in np.linspace(0, 1, len(universes))]
-
-for dataset in datasets:
+# for dataset in datasets:
+#     bottom_val = 0
+#     for i, universe_number in enumerate(universes):
+#         universe_color = colors[i]
+#         rel_df = df.loc[(df.universe == universe_number) & (df.rv_dataset == dataset)]
+#         n_converged = len(rel_df.loc[rel_df.mcmc_converged])
+#         n_failed = len(rel_df) - n_converged
+#         p = ax.bar(
+#             dataset,
+#             n_failed,
+#             0.5,
+#             label=universe_number,
+#             bottom=bottom_val,
+#             color=universe_color,
+#             alpha=0.25,
+#         )
+#         p = ax.bar(
+#             dataset,
+#             n_converged,
+#             0.5,
+#             label=universe_number,
+#             bottom=bottom_val + n_failed,
+#             color=universe_color,
+#         )
+#         bottom_val += len(rel_df)
+# legend_elements = [
+#     mpl.patches.Patch(color=colors[i], label=f"{i}") for i in range(len(universes))
+# ]
+colors = [cmap(val) for val in np.linspace(0, 1, len(datasets))]
+for universe_number in universes:
     bottom_val = 0
-    for i, universe_number in enumerate(universes):
-        universe_color = colors[i]
+    for i, dataset in enumerate(datasets):
+        dataset_color = colors[i]
         rel_df = df.loc[(df.universe == universe_number) & (df.rv_dataset == dataset)]
         n_converged = len(rel_df.loc[rel_df.mcmc_converged])
         n_failed = len(rel_df) - n_converged
         p = ax.bar(
-            dataset,
+            universe_number,
             n_failed,
             0.5,
-            label=universe_number,
+            label=dataset,
             bottom=bottom_val,
-            color=universe_color,
+            color=dataset_color,
             alpha=0.25,
         )
         p = ax.bar(
-            dataset,
+            universe_number,
             n_converged,
             0.5,
-            label=universe_number,
+            label=dataset,
             bottom=bottom_val + n_failed,
-            color=universe_color,
+            color=dataset_color,
         )
         bottom_val += len(rel_df)
-        bottom_val += n_converged
 legend_elements = [
-    mpl.patches.Patch(color=colors[i], label=f"{i}") for i in range(len(universes))
+    mpl.patches.Patch(color=colors[i], label=f"{dataset}")
+    for i, dataset in enumerate(datasets)
 ]
 # legend_elements.append(mpl.patches.Patch(color="k", alpha=1, label="MCMC converged"))
 # legend_elements.append(mpl.patches.Patch(color="k", alpha=0.25, label="No fit"))
 # mpl.lines.Line2D([0], [0], color = 'k', linewidth=lw, ls='dashed', label='Optimistic')
 fig.subplots_adjust(top=0.9)
 ax.set_ylabel("Number of systems")
+ax.set_xticks(np.arange(universes.min(), universes.max() + 1, 1))
 ax.legend(
     handles=legend_elements,
     ncols=int(len(universes) / 3) + 1,
@@ -218,13 +247,14 @@ filtered_systems = []
 n_filtered_planets = 0
 n_kept_planets = []
 best_sigmas = []
-for i, row in local_df.iterrows():
+for i, row in df.iterrows():
     if row.mcmc_converged:
         # Load the fit system
         system_location = Path(row.fit_path.parent, "fitsystem.p")
         if system_location.exists():
             with open(system_location, "rb") as f:
                 system = pickle.load(f)
+            filtered_systems.append(system)
 
             # Testing the filtering
             true_system = system.true_system
@@ -248,11 +278,9 @@ for i, row in local_df.iterrows():
 
                 # breakpoint()
             system.filtered_planets = planets_to_keep
-        # breakpoint()
-        system.rv_error = row.best_sigma
-        filtered_systems.append(system)
-        n_kept_planets.append(len(planets_to_keep))
-        best_sigmas.append(row.best_sigma)
+            system.rv_error = row.best_sigma
+            n_kept_planets.append(len(planets_to_keep))
+            best_sigmas.append(row.best_sigma)
 
 kept_ratios = []
 kept_errors = []
@@ -302,6 +330,7 @@ for i, best_sigma in enumerate(np.unique(best_sigmas)):
     # bottom_val += n_converged
 ax3.set_xlabel("RV precision m/s")
 ax3.set_ylabel("Average number of planets fit per system")
+breakpoint()
 plt.show()
 
 # hip.Experiment.from_iterable(df).display()
