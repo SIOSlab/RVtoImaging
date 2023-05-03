@@ -174,6 +174,8 @@ else:
 if Path(remote_name).exists():
     remote_df = pd.read_pickle(remote_name)
     df = pd.concat([remote_df, local_df]).reset_index(drop=True)
+else:
+    df = local_df
 
 fig, ax = plt.subplots(figsize=(20, 10))
 cmap = plt.get_cmap("viridis")
