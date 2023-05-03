@@ -10,6 +10,12 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+with open(".plot_config.json", "r") as f:
+    config = json.load(f)
+
+local = config["local"]
+remote = config["remote"]
+
 sim_script = "../test.json"
 seed_range = range(30, 45)
 datasets = ["conservative", "baseline", "optimistic"]
@@ -23,7 +29,9 @@ rv_terms = [
     "magnetic",
 ]
 
-tphon_df = pd.read_pickle("tphon_df.p")
+local_name = f"{local}_df.p"
+remote_name = f"{remote}_df.p"
+
 
 # Load the EXOSIMS script being used
 with open(sim_script, "r") as f:
@@ -40,7 +48,7 @@ relevant_params = {
     "PlanetPopulation": script["modules"]["PlanetPopulation"],
     "SimulatedUniverse": script["modules"]["SimulatedUniverse"],
 }
-if not Path("local_df.p").exists():
+if not Path(local_name).exists():
     es_universes = []
     all_info = []
     for un in tqdm(all_universes, desc="Universe", position=0, leave=True):
@@ -159,12 +167,13 @@ if not Path("local_df.p").exists():
                                         ).value.tolist()
                                     all_info.append(fit_info)
     local_df = pd.DataFrame.from_dict(all_info, orient="columns")
-    local_df.to_pickle("local_df.p")
+    local_df.to_pickle(local_name)
 else:
-    local_df = pd.read_pickle("local_df.p")
+    local_df = pd.read_pickle(local_name)
 
-# df = pd.concat([tphon_df, local_df]).reset_index(drop=True)
-df = tphon_df
+if Path(remote_name).exists():
+    remote_df = pd.read_pickle(remote_name)
+    df = pd.concat([remote_df, local_df]).reset_index(drop=True)
 
 fig, ax = plt.subplots(figsize=(20, 10))
 cmap = plt.get_cmap("viridis")
