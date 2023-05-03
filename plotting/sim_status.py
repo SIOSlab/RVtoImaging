@@ -165,6 +165,17 @@ if not Path(local_name).exists():
                                         fit_info["rms_vals"] = system.getpattr(
                                             "best_rms"
                                         ).value.tolist()
+                                        period_errors = []
+                                        for planet in system.planets:
+                                            Terr = np.abs(
+                                                (
+                                                    system.true_system.getpattr("T")
+                                                    - planet.T
+                                                )
+                                                / planet.T
+                                            )
+                                            period_errors.append(Terr[np.argmin(Terr)])
+                                        fit_info["period_errors"] = period_errors
                                     all_info.append(fit_info)
     local_df = pd.DataFrame.from_dict(all_info, orient="columns")
     local_df.to_pickle(local_name)
