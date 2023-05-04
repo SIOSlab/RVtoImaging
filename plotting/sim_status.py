@@ -165,8 +165,10 @@ if not Path(local_name).exists():
                                         fit_info["rms_vals"] = system.getpattr(
                                             "best_rms"
                                         ).value.tolist()
+                                        periods = []
                                         period_errors = []
                                         for planet in system.planets:
+                                            periods.append(planet.T.to(u.yr).value)
                                             Terr = np.abs(
                                                 (
                                                     system.true_system.getpattr("T")
@@ -175,6 +177,7 @@ if not Path(local_name).exists():
                                                 / planet.T
                                             )
                                             period_errors.append(Terr[np.argmin(Terr)])
+                                        fit_info["periods"] = periods
                                         fit_info["period_errors"] = period_errors
                                     all_info.append(fit_info)
     local_df = pd.DataFrame.from_dict(all_info, orient="columns")
@@ -265,95 +268,105 @@ ax.legend(
 fig.savefig("progress.png", dpi=300)
 
 # Analysis
-filtered_systems = []
-n_filtered_planets = 0
-n_kept_planets = []
-best_sigmas = []
-for i, row in df.iterrows():
-    if row.mcmc_converged:
-        # Load the fit system
-        system_location = Path(row.fit_path.parent, "fitsystem.p")
-        if system_location.exists():
-            with open(system_location, "rb") as f:
-                system = pickle.load(f)
-            filtered_systems.append(system)
+# filtered_systems = []
+# n_filtered_planets = 0
+# period_errors = []
+# worst_period_errors = []
+# worst_period_error_sigmas = []
+# n_kept_planets = []
+# best_sigmas = []
+# for i, row in df.iterrows():
+#     if row.mcmc_converged:
+#         # Load the fit system
+#         # Testing the filtering
+#         planets_to_keep = []
+#         Terr = row.period_errors
+#         if type(Terr) is list:
+#             for err in Terr:
+#                 if not np.isnan(err):
+#                     period_errors.append(err)
+#                     best_sigmas.append(row.best_prob)
+#             worst_period_errors.append(max(Terr))
+#             worst_period_error_sigmas.append(row.best_prob)
+#         else:
+#             if not np.isnan(Terr):
+#                 period_errors.append(Terr)
+#                 best_sigmas.append(row.best_prob)
+#                 worst_period_errors.append(Terr)
+#                 worst_period_error_sigmas.append(row.best_prob)
 
-            # Testing the filtering
-            true_system = system.true_system
-            planets_to_keep = []
-            for planet in system.planets:
-                per_Kerr = np.abs((true_system.getpattr("K") - planet.K) / planet.K)
-                per_Terr = np.abs((true_system.getpattr("T") - planet.T) / planet.T)
-                summed_error = per_Kerr + per_Terr
+# for planet in system.planets:
+#     per_Kerr = np.abs((true_system.getpattr("K") - planet.K) / planet.K)
+#     per_Terr = np.abs((true_system.getpattr("T") - planet.T) / planet.T)
+#     summed_error = per_Kerr + per_Terr
 
-                # # Normalize the differences by the range of the system values
-                # Knorm = np.abs(Kerr / (np.ptp(true_system.getpattr("K"))))
-                # Tnorm = np.abs(Terr / (np.ptp(true_system.getpattr("T"))))
+#     # # Normalize the differences by the range of the system values
+#     # Knorm = np.abs(Kerr / (np.ptp(true_system.getpattr("K"))))
+#     # Tnorm = np.abs(Terr / (np.ptp(true_system.getpattr("T"))))
 
-                closest_planet = np.argmin(summed_error)
-                planet.closest_planet = closest_planet
-                planet.closest_planet_err = summed_error[closest_planet].value
-                if planet.closest_planet_err < 0.05:
-                    planets_to_keep.append(planet)
-                else:
-                    n_filtered_planets += 1
+#     closest_planet = np.argmin(summed_error)
+#     planet.closest_planet = closest_planet
+#     planet.closest_planet_err = summed_error[closest_planet].value
+#     if planet.closest_planet_err < 0.05:
+#         planets_to_keep.append(planet)
+#     else:
+#         n_filtered_planets += 1
 
-                # breakpoint()
-            system.filtered_planets = planets_to_keep
-            system.rv_error = row.best_sigma
-            n_kept_planets.append(len(planets_to_keep))
-            best_sigmas.append(row.best_sigma)
-
-kept_ratios = []
-kept_errors = []
-removed_ratios = []
-removed_errors = []
-for system in filtered_systems:
-    true_system = system.true_system
-    for planet in system.planets:
-        match_planet = true_system.planets[planet.closest_planet]
-        if planet in system.filtered_planets:
-            kept_ratios.append(system.rv_error / match_planet.K.to(u.m / u.s).value)
-            kept_errors.append(planet.closest_planet_err)
-        else:
-            match_planet = true_system.planets[planet.best_match]
-            removed_ratios.append(system.rv_error / match_planet.K.to(u.m / u.s).value)
-            removed_errors.append(planet.closest_planet_err)
-            # kept_ratios.append(system.rv_error)
+#     # breakpoint()
+# system.filtered_planets = planets_to_keep
+# system.rv_error = row.best_sigma
+# n_kept_planets.append(len(planets_to_keep))
+# best_sigmas.append(row.best_sigma)
+# kept_ratios = []
+# kept_errors = []
+# removed_ratios = []
+# removed_errors = []
+# for system in filtered_systems:
+#     true_system = system.true_system
+#     for planet in system.planets:
+#         match_planet = true_system.planets[planet.closest_planet]
+#         if planet in system.filtered_planets:
+#             kept_ratios.append(system.rv_error / match_planet.K.to(u.m / u.s).value)
+#             kept_errors.append(planet.closest_planet_err)
+#         else:
+#             match_planet = true_system.planets[planet.best_match]
+#           removed_ratios.append(system.rv_error / match_planet.K.to(u.m / u.s).value)
+#             removed_errors.append(planet.closest_planet_err)
+# kept_ratios.append(system.rv_error)
 
 # plt.close()
-fig2, ax2 = plt.subplots(figsize=(8, 8))
-ax2.scatter(
-    kept_ratios, kept_errors, s=5, label="Considered candidated", color=cmap(0.99)
-)
-ax2.scatter(removed_ratios, removed_errors, s=5, label="Filtered out", color=cmap(0))
-ax2.legend()
-ax2.set_xlim([0, 2])
-ax2.set_ylim([-0.1, 1])
-ax2.set_xlabel(r"Ratio ($\frac{\sigma}{K}$)")
-ax2.set_ylabel("Summed percent error on K and T compared to closest planet")
-fig2.savefig("filtering.png")
+# fig2, ax2 = plt.subplots(figsize=(8, 8))
+# ax2.scatter(
+#     kept_ratios, kept_errors, s=5, label="Considered candidated", color=cmap(0.99)
+# )
+# ax2.scatter(removed_ratios, removed_errors, s=5, label="Filtered out", color=cmap(0))
+# ax2.legend()
+# ax2.set_xlim([0, 2])
+# ax2.set_ylim([-0.1, 1])
+# ax2.set_xlabel(r"Ratio ($\frac{\sigma}{K}$)")
+# ax2.set_ylabel("Summed percent error on K and T compared to closest planet")
+# fig2.savefig("filtering.png")
 
-fig3, ax3 = plt.subplots(figsize=(8, 8))
-colors = [cmap(val) for val in np.linspace(0, 1, len(np.unique(best_sigmas)))]
-for i, best_sigma in enumerate(np.unique(best_sigmas)):
-    color = colors[i]
-    sigma_inds = np.where(np.array(best_sigmas) == best_sigma)[0]
-    n_kept_planets_sigma = np.array(n_kept_planets)[sigma_inds]
-    p = ax3.bar(
-        best_sigma,
-        np.mean(n_kept_planets_sigma),
-        0.1,
-        # label=universe_number,
-        # bottom=bottom_val,  # + n_failed,
-        color=color,
-    )
-    # bottom_val += len(rel_df)
-    # bottom_val += n_converged
-ax3.set_xlabel("RV precision m/s")
-ax3.set_ylabel("Average number of planets fit per system")
-breakpoint()
-plt.show()
+# fig3, ax3 = plt.subplots(figsize=(8, 8))
+# colors = [cmap(val) for val in np.linspace(0, 1, len(np.unique(best_sigmas)))]
+# for i, best_sigma in enumerate(np.unique(best_sigmas)):
+#     color = colors[i]
+#     sigma_inds = np.where(np.array(best_sigmas) == best_sigma)[0]
+#     n_kept_planets_sigma = np.array(n_kept_planets)[sigma_inds]
+#     p = ax3.bar(
+#         best_sigma,
+#         np.mean(n_kept_planets_sigma),
+#         0.1,
+#         # label=universe_number,
+#         # bottom=bottom_val,  # + n_failed,
+#         color=color,
+#     )
+#     # bottom_val += len(rel_df)
+#     # bottom_val += n_converged
+# ax3.set_xlabel("RV precision m/s")
+# ax3.set_ylabel("Average number of planets fit per system")
+# breakpoint()
+# plt.show()
 
 # hip.Experiment.from_iterable(df).display()
 # cmap = plt.get_cmap("viridis")
