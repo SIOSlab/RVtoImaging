@@ -72,6 +72,8 @@ class RVFits:
             # Directory to save fit based on max number of planets ("depth")
             rvdataset_path = Path(system_path, rvdataset.name)
             fit_dir = Path(rvdataset_path, f"{max_planets}_depth")
+            if not fit_dir.exists():
+                fit_dir.mkdir(parents=True, exist_ok=True)
             self.paths.append(fit_dir)
             if max_planets == 0:
                 logger.warning(f"No detections feasible around {star_name}.")
