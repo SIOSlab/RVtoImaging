@@ -81,6 +81,8 @@ if not Path(local_name).exists():
                         _obs_spec = Path(survey, "obs_spec.json")
                         _obs_data = Path(survey, "rv.csv")
                         fit_spec_path = Path(survey, "4_depth", "spec.json")
+                        # searcher_path = Path(survey, "4_depth", "search.pkl")
+                        post_path = Path(survey, "4_depth", "post_final.pkl")
                         if fit_spec_path.exists():
                             # If the fit has been done then we catalog it
                             with open(_obs_spec, "r") as f:
@@ -152,6 +154,14 @@ if not Path(local_name).exists():
 
                                         else:
                                             fit_info["best_prob"] = None
+                                    if "post_bic" in fit_spec.keys():
+                                        fit_info["post_bic"] = fit_spec["post_bic"]
+                                    else:
+                                        if post_path.exists():
+                                            with open(post_path, "rb") as f:
+                                                post = pickle.load(f)
+                                            fit_info["post_bic"] = post.bic()
+
                                     # Load the fit system
                                     system_location = Path(
                                         fit_spec_path.parent, "fitsystem.p"
