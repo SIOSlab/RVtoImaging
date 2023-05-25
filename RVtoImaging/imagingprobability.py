@@ -38,7 +38,19 @@ class ImagingProbability:
         self.n_fits = params["number_of_orbits"]
         start_time = params["start_time"]
         end_time = params["end_time"]
-        self.pdet_times = Time(np.arange(start_time.jd, end_time.jd, 1), format="jd")
+
+        min_int_time = params["min_int_time"]
+        max_int_time = params["max_int_time"]
+        if max_int_time > self.SS.TargetList.OpticalSystem.intCutoff:
+            logger.warn("Maximum integration time exceeds EXOSIMS intCutoff")
+
+        # max_int_time = self.SS.TargetList.OpticalSystem.intCutoff
+        self.int_times = self.gen_int_times(min_int_time, max_int_time)
+
+        self.pdet_times = Time(
+            np.arange(start_time.jd, end_time.jd, min_int_time.to(u.d).value),
+            format="jd",
+        )
 
         self.pops = {}
         self.pdets = {}
@@ -58,7 +70,8 @@ class ImagingProbability:
                 # continue
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
-            pdet_path = Path(system_path, "pdet.nc")
+            # pdet_path = Path(system_path, "pdet.nc")
+            pdet_path = Path(system_path, "pdet.p")
             pops_path = Path(system_path, "pops.p")
             if chains_path.exists():
                 # TODO MAKE THIS IF NOT EXISTS
@@ -75,13 +88,13 @@ class ImagingProbability:
                     planets_fitted = search.post.params.num_planets
                     system = universe.systems[system_id]
                     system_pops = []
-                    int_times = self.gen_int_times(self.SS)
-                    dMag0s = self.gen_dMag0s(self.SS, system)
+                    # Create the integration times and dMag0s
+                    dMag0s = self.gen_dMag0s(self.SS, system, self.int_times)
                     system_pdets = pd.DataFrame(
-                        np.zeros((len(int_times), len(self.pdet_times))),
+                        np.zeros((len(self.int_times), len(self.pdet_times))),
                         columns=self.pdet_times,
                     )
-                    system_pdets.index = int_times
+                    system_pdets.index = self.int_times
                     logger.info(
                         f"Calculating probability of detection for {system.star.name}"
                     )
@@ -102,7 +115,11 @@ class ImagingProbability:
                             )
                         )
                         system_pops[i].calculate_pdet(
-                            self.pdet_times, int_times, dMag0s, self.SS, workers=workers
+                            self.pdet_times,
+                            self.int_times,
+                            dMag0s,
+                            self.SS,
+                            workers=workers,
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
                     self.pops[universe.names[system_id]] = system_pops
@@ -111,13 +128,15 @@ class ImagingProbability:
                         dims=["planet", "int_time", "time"],
                         coords=[
                             np.arange(0, planets_fitted, 1),
-                            int_times,
+                            self.int_times,
                             self.pdet_times.datetime,
                         ],
                     )
                     pdet_xr_set = pdet_xr.to_dataset(name="pdet")
                     # self.plot(system, system_pops, self.pdet_times, system_pdets)
-                    pdet_xr_set.to_netcdf(pdet_path)
+                    # pdet_xr_set.to_netcdf(pdet_path)
+                    with open(pdet_path, "wb") as f:
+                        pickle.dump(pdet_xr_set, f)
                     with open(pops_path, "wb") as f:
                         pickle.dump(system_pops, f)
                 else:
@@ -125,9 +144,11 @@ class ImagingProbability:
                         f"Probability of detection already exists for"
                         f" {universe.systems[system_id].star.name}"
                     )
-                    pdet_xr_set = xr.load_dataset(
-                        pdet_path, decode_cf=True, decode_times=True, engine="netcdf4"
-                    )
+                    # pdet_xr_set = xr.load_dataset(
+                    #     pdet_path, decode_cf=True, decode_times=True, engine="netcdf4"
+                    # )
+                    with open(pdet_path, "rb") as f:
+                        pdet_xr_set = pickle.load(f)
                     with open(pops_path, "rb") as f:
                         self.pops[universe.names[system_id]] = pickle.load(f)
                     # self.pops[universe.names[system_id]] = system_pops
@@ -140,7 +161,7 @@ class ImagingProbability:
             else:
                 logger.warning(f"No chains were created for system {system_id}")
 
-    def gen_dMag0s(self, SS, system):
+    def gen_dMag0s(self, SS, system, int_times):
         TL = SS.TargetList
         OS = TL.OpticalSystem
         ZL = TL.ZodiacalLight
@@ -152,22 +173,12 @@ class ImagingProbability:
         mode = list(
             filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
         )[0]
-        min_time = 1 * u.hr
-        max_time = OS.intCutoff
 
-        target_sInd = np.where(TL.Name == system.star.name.replace("_", " "))[0][0]
+        target_sInd = np.where(TL.Name == system.star.name.replace("_", " "))[0]
         # except:
         #     target_sInd = np.where(
         #         SS.StarCatalog.Name == system.star.name.replace("_", " ")
         #     )[0][0]
-        int_times = (
-            np.logspace(
-                0,
-                np.log10((max_time / min_time).decompose()).value,
-                int(max_time.to(u.day).value),
-            )
-            * min_time
-        ).to(u.d)
         dMag0s = []
         for int_time in int_times:
             dMag0s.append(
@@ -177,19 +188,26 @@ class ImagingProbability:
             )
         return dMag0s
 
-    def gen_int_times(self, SS):
-        TL = SS.TargetList
-        OS = TL.OpticalSystem
-        min_time = 1 * u.hr
-        max_time = OS.intCutoff
-        int_times = (
-            np.logspace(
-                0,
-                np.log10((max_time / min_time).decompose()).value,
-                int(max_time.to(u.day).value),
-            )
-            * min_time
-        ).to(u.d)
+    def gen_int_times(self, min_time, max_time):
+        # TL = SS.TargetList
+        # OS = TL.OpticalSystem
+        # min_time = 1 * u.hr
+        # max_time = OS.intCutoff
+
+        # Setting up array of integration times
+        base = 2
+        maxn = int(np.emath.logn(base, (max_time / min_time).decompose().value))
+        tmp = [(base**n) for n in range(0, maxn + 1)]
+        tmp2 = [tmp[i] + tmp[i - 1] for i in range(1, len(tmp) - 1)]
+        int_times = min_time.to(u.d) * np.sort(np.array(tmp + tmp2))
+        # int_times = (
+        #     np.logspace(
+        #         0,
+        #         np.log10((max_time / min_time).decompose()).value,
+        #         int(max_time.to(u.day).value),
+        #     )
+        #     * min_time
+        # ).to(u.d)
         return int_times
 
     def split_chains(self, chains, nplan):

@@ -41,6 +41,10 @@ class Builder(ABC):
         pass
 
     @abstractmethod
+    def build_img_pdet(self) -> None:
+        pass
+
+    @abstractmethod
     def build_img_schedule(self) -> None:
         pass
 
@@ -96,9 +100,9 @@ class BaseBuilder(Builder):
         self.rv2img.create_rv_fits(self.rv_fits_params)
 
     # MOVE THIS TO THE SCHEDULER!
-    # def probability_of_detection(self):
-    #     logger.info("Building orbit fits")
-    #     self.rv2img.calc_pdet(self.pdet_params)
+    def build_img_pdet(self):
+        logger.info("Building probability of detection")
+        self.rv2img.create_pdet(self.pdet_params)
 
     def build_img_schedule(self):
         self.rv2img.create_img_schedule(self.img_schedule_params)
@@ -112,7 +116,7 @@ class BaseBuilder(Builder):
         self.build_universe()
         self.build_rv_dataset()
         self.build_rv_fits()
-        # self.probability_of_detection()
+        self.build_img_pdet()
         self.build_img_schedule()
 
     def run_seeds(self):
@@ -259,10 +263,10 @@ class RVtoImaging:
             logger.info(f"Loaded universe from {self.universe_path}")
         else:
             # Create
-            universelib = importlib.import_module(
-                f"RVtoImaging.cosmoses.{universe_type}"
+            exoverse_module = importlib.import_module(
+                f"exoverses.{universe_type}.universe"
             )
-            self.universe = universelib.create_universe(universe_params)
+            self.universe = exoverse_module.create_universe(universe_params)
 
             # Cache
             with open(self.universe_path, "wb") as f:
@@ -370,7 +374,7 @@ class RVtoImaging:
             rv_fits_params, self.universe, self.rvdataset, self.workers
         )
 
-    def calc_pdet(self, pdet_params):
+    def create_pdet(self, pdet_params):
         with open(Path(pdet_params["script"])) as f:
             exosims_script = json.loads(f.read())
         if "forced_seed" in pdet_params.keys():
