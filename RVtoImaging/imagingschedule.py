@@ -1,3 +1,4 @@
+import math
 import pickle
 from pathlib import Path
 
@@ -16,18 +17,21 @@ class ImagingSchedule:
     Base class to do probability of detection calculations
     """
 
-    def __init__(self, params, pdet, universe_dir):
+    def __init__(self, params, pdet, universe_dir, workers):
         self.params = params
         self.sim_length = params["sim_length"]
         self.window_length = params["window_length"]
         self.block_multiples = params["block_multiples"]
-        self.n_sectors = params["n_sectors"]
+        self.max_observations_per_star = params["max_observations_per_star"]
         self.planet_threshold = params["planet_threshold"]
-        self.max_planet_observations = params["max_planet_observations"]
+        self.n_observations_above_threshold = params["n_observations_above_threshold"]
+        self.time_between_observations = params["time_between_observations"]
+        self.log_search_progress = params["log_search_progress"]
+        self.max_time_in_seconds = params["max_time_in_seconds"]
         logger.info("Creating Imaging Schedule")
-        self.create_schedule(pdet, universe_dir)
+        self.create_schedule(pdet, universe_dir, workers)
 
-    def create_schedule(self, pdet, universe_dir):
+    def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
             universe_dir,
             f"schedule_{self.sim_length}_{self.window_length}.p".replace(" ", ""),
@@ -44,10 +48,11 @@ class ImagingSchedule:
         else:
             SS = pdet.SS
             start_time = SS.TimeKeeping.missionStart
+            start_time_jd = start_time.jd
             end_time = start_time + self.sim_length
             end_time_jd = end_time.jd
             obs_times = Time(
-                np.arange(start_time.jd, end_time_jd, self.window_length.to(u.d).value),
+                np.arange(start_time_jd, end_time_jd, self.window_length.to(u.d).value),
                 format="jd",
                 scale="tai",
             )
@@ -62,10 +67,14 @@ class ImagingSchedule:
             int_times = np.array(self.block_multiples) * self.window_length.to(u.d)
             int_times_d = int_times.to(u.d).value
             n_int_times = len(int_times)
-            sector_inds = {}
-            inds_per_sector = int(n_obs_times / self.n_sectors)
-            for i in range(self.n_sectors):
-                sector_inds[i] = np.arange(
+
+            blocks_between_observations = math.ceil(
+                self.time_between_observations.to(u.d).value / min_int_time
+            )
+            time_sector_inds = {}
+            inds_per_sector = int(n_obs_times / self.n_time_sectors)
+            for i in range(self.n_time_sectors):
+                time_sector_inds[i] = np.arange(
                     i * inds_per_sector, (i + 1) * inds_per_sector, 1
                 )
 
@@ -84,18 +93,39 @@ class ImagingSchedule:
 
             # Setting up solver
             star_planets = {}
-            # solver = pywraplp.Solver.CreateSolver("SCIP")
             model = cp_model.CpModel()
             solver = cp_model.CpSolver()
-            solver.parameters.num_search_workers = 10
-            solver.parameters.log_search_progress = True
-            solver.parameters.max_time_in_seconds = 5 * 60
+            solver.parameters.num_search_workers = workers
+            solver.parameters.log_search_progress = self.log_search_progress
+            solver.parameters.max_time_in_seconds = self.max_time_in_seconds
             # Coefficients (probability of detections)
             coeffs = {}
             # Dictionary keyed on stars that holds all variables
             self.vars = {}
             all_intervals = []
 
+            # Input sanity checks
+            max_schedule_int_time = max(int_times_d)
+            max_pdet_int_time = max(all_pdets[relevant_stars[0]].int_time.values)
+            assert max_schedule_int_time <= max_pdet_int_time, (
+                "Probability of detection cannot be interpolated safely."
+                "The highest integration time used to calculate probability of"
+                f" detection ({max_pdet_int_time}) must be less than "
+                "or equal to and the highest integration time expected to be used for"
+                f" scheduling ({max_schedule_int_time})."
+            )
+            min_schedule_int_time = min(int_times_d)
+            min_pdet_int_time = min(all_pdets[relevant_stars[0]].int_time.values)
+            assert min_schedule_int_time >= min_pdet_int_time, (
+                "Probability of detection cannot be interpolated safely."
+                "The lowest integration time used to calculate probability of"
+                f" detection ({min_pdet_int_time}) must be greater than "
+                "or equal to and the lowest integration time expected to be used for"
+                f" scheduling ({min_schedule_int_time})."
+            )
+            #########################################
+            # Stage 1
+            #########################################
             logger.info("Creating decision variables and coefficients for optimization")
             for star in tqdm(relevant_stars, desc="stars", position=0):
                 # star_name = star.replace("_", " ")
@@ -109,24 +139,18 @@ class ImagingSchedule:
                     dtype=bool,
                 )
                 self.vars[star] = {"vars": []}
-                for i in range(self.n_sectors):
+                for i in range(self.max_observations_per_star):
                     # Creating intervals that can be moved
-                    _start = model.NewIntVar(
-                        sector_inds[i][0], sector_inds[i][-2], f"{star} start {i}"
-                    )
+                    _start = model.NewIntVar(0, len(obs_times) - 1, f"{star} start {i}")
                     _size = model.NewIntVarFromDomain(
                         cp_model.Domain.FromValues(int_times_blocks), f"{star} size {i}"
                     )
-                    # _size = model.NewIntVar(1, longest_obs_int, f"{star} size {i}")
-                    _end = model.NewIntVar(
-                        sector_inds[i][1], sector_inds[i][-1], f"{star} end {i}"
-                    )
+                    _end = model.NewIntVar(1, len(obs_times), f"{star} end {i}")
                     _active = model.NewBoolVar(f"{star} active {i}")
                     _interval = model.NewOptionalIntervalVar(
                         _start, _size, _end, _active, f"{star} interval {i}"
                     )
                     all_intervals.append(_interval)
-                    model.Add(_start + _size == _end)
                     self.vars[star]["vars"].append(
                         {
                             "start": _start,
@@ -170,12 +194,86 @@ class ImagingSchedule:
                     star_pdets[planet][:][:] = int_planet_pdet
                 self.vars[star]["coeffs"] = star_pdets
 
+                # Set up the planet sectors
+                # planet_sectors = np.zeros((len(star_planets[star]), n_obs_times))
+                # for planet in star_planets[star]:
+                #     planet_pop = pdet.pops[star][planet]
+                #     pop_T = np.median(planet_pop.T)
+
+                #     # These orb_sectors separate an orbit into 8 different sectors of
+                #     # the orbit, which can be used to space out observations for bette
+                #     # orbital coverage
+                #     orb_sector_times = obs_times_jd - start_time_jd
+                #     obs_orb_sectors = np.digitize(
+                #         orb_sector_times % pop_T.to(u.d).value,
+                #         np.linspace(0, pop_T.to(u.d).value, 9),
+                #     )
+                #     unique_orb_sectors = np.unique(obs_orb_sectors)
+                #     orb_sector_vals = {}
+
+                # orb_sectors_to_observe is a orb_sector we can observe,
+                # constraints will be added based on how many there are
+                # orb_sectors_to_observe = []
+                # orb_sector_maxes = []
+                # for orb_sector in unique_orb_sectors:
+                #     orb_sector_inds = np.where(obs_orb_sectors == orb_sector)[0]
+                #     orb_sector_vals[orb_sector] = planet_pdet.values[
+                #         orb_sector_inds
+                #     ]
+                #     if np.max(orb_sector_vals[orb_sector]) > self.planet_threshold:
+                #         orb_sector_maxes.append(
+                #             np.median(orb_sector_vals[orb_sector])
+                #         )
+                #     orb_sectors_to_observe.append(orb_sector)
+                # planet_sectors.append(obs_orb_sectors[obs_ind])
+
             logger.info("Creating optimization constraints")
             # Constraint on one star observation per observation time
             # for obs_time_jd in tqdm(obs_times_jd, desc="no concurrent observations"):
             #     model.Add(sum(concurrent_obs[obs_time_jd]) <= 1)
             model.AddNoOverlap(all_intervals)
 
+            # Constraint on blocks between observations
+            # This is done by looping over all the intervals for each star
+            # creating an intermediary boolean that is true when they are both
+            # active and adding a constraint that the intervals is above the user
+            # defined distance between observations
+            for star in relevant_stars:
+                star_var_list = self.vars[star]["vars"]
+                for i, i_var_set in enumerate(star_var_list[:-1]):
+                    # Get model variables
+                    i_start = i_var_set["start"]
+                    i_end = i_var_set["end"]
+                    i_active = i_var_set["active"]
+                    for j, j_var_set in enumerate(star_var_list[i + 1 :]):
+                        # Get model variables
+                        j_start = j_var_set["start"]
+                        j_end = j_var_set["end"]
+                        j_active = j_var_set["active"]
+
+                        # Create boolean that's active when both intervals are active
+                        _bool = model.NewBoolVar(
+                            f"{star} blocks between intervals {i} and {j}"
+                        )
+                        model.Add(i_active + j_active == 2).OnlyEnforceIf(_bool)
+                        model.Add(i_active + j_active <= 1).OnlyEnforceIf(_bool.Not())
+
+                        # Bool used to determine which distance we need to be checking
+                        i_before_j_bool = model.NewBoolVar(
+                            f"{star} interval {i} starts before interval {j}"
+                        )
+                        model.Add(i_start < j_start).OnlyEnforceIf(i_before_j_bool)
+                        model.Add(i_start > j_start).OnlyEnforceIf(
+                            i_before_j_bool.Not()
+                        )
+
+                        # Add distance constraints
+                        model.Add(
+                            j_start - i_end >= blocks_between_observations
+                        ).OnlyEnforceIf(i_before_j_bool, _bool)
+                        model.Add(
+                            i_start - j_end >= blocks_between_observations
+                        ).OnlyEnforceIf(i_before_j_bool.Not(), _bool)
             # Constraint on total integration time
             # model.Add(sum(int_coeffs) <= len(obs_times))
 
@@ -187,6 +285,8 @@ class ImagingSchedule:
             # Maximize the summed probability of detection
             obj_terms = []
             all_bools = []
+            all_active_bools = []
+            all_size_vars = []
             planet_terms = {}
             for star in tqdm(relevant_stars, desc="Creating observation booleans"):
                 # list of the dictionary of interval variables
@@ -198,7 +298,7 @@ class ImagingSchedule:
                 # Dictionary keyed on [star][planet][sector] that gets used to
                 # create the constraint for the planets
                 planet_terms[star] = {}
-                for sector in range(self.n_sectors):
+                for sector in range(self.n_time_sectors):
                     planet_terms[star][sector] = {}
                     for planet in star_planets[star]:
                         planet_terms[star][sector][planet] = []
@@ -209,10 +309,12 @@ class ImagingSchedule:
                     start_var = var_set["start"]
                     size_var = var_set["size"]
                     active_var = var_set["active"]
+                    all_active_bools.append(active_var)
+                    all_size_vars.append(size_var)
                     set_bools = []
                     for n_int, n_times_blocks in enumerate(int_times_blocks):
                         for n_obs in range(n_obs_times):
-                            if n_obs in sector_inds[i]:
+                            if n_obs in time_sector_inds[i]:
                                 _bool = model.NewBoolVar(f"{star} {n_int} {n_obs}")
                                 set_bools.append(_bool)
                                 model.Add(start_var == n_obs).OnlyEnforceIf(_bool)
@@ -225,25 +327,43 @@ class ImagingSchedule:
                                     planet_terms[star][i][planet].append(
                                         (_bool, coeffs[planet, n_int, n_obs])
                                     )
-                    # Is this helpful?
                     var_set["bools"] = set_bools
                     all_bools.extend(set_bools)
 
             # Set up planet constraint, number of observations above 0.5 pdet
             # are less than 4
+            # for star in relevant_stars:
+            #     for planet in star_planets[star]:
+            #         # planets_above_threshold.append(
+            #         #     model.NewBoolVar(f"{star}{planet} meets threshold")
+            #         # )
+            #         above_threshold_val = []
+            #         for sector in range(self.n_time_sectors):
+            #             for _bool, coeff in planet_terms[star][sector][planet]:
+            #                 if coeff > self.planet_threshold:
+            #                     above_threshold_val.append(_bool)
+            #         model.Add(sum(above_threshold_val) <= self.max_planet_observations
+            # model.Maximize(sum(obj_terms))
+            planets_above_threshold = []
             for star in relevant_stars:
                 for planet in star_planets[star]:
-                    # planets_above_threshold.append(
-                    #     model.NewBoolVar(f"{star}{planet} meets threshold")
-                    # )
+                    this_planet_bool = model.NewBoolVar(
+                        f"{star}{planet} meets threshold"
+                    )
+                    planets_above_threshold.append(this_planet_bool)
                     above_threshold_val = []
-                    for sector in range(self.n_sectors):
+                    for sector in range(self.n_time_sectors):
                         for _bool, coeff in planet_terms[star][sector][planet]:
-                            if coeff > self.planet_threshold:
+                            if coeff > 100 * self.planet_threshold:
                                 above_threshold_val.append(_bool)
-                    model.Add(sum(above_threshold_val) <= self.max_planet_observations)
-
-            model.Maximize(sum(obj_terms))
+                    model.Add(
+                        sum(above_threshold_val) >= self.n_observations_above_threshold
+                    ).OnlyEnforceIf(this_planet_bool)
+            model.Maximize(
+                sum(100 * max(self.block_multiples) * planets_above_threshold)
+                - sum(all_size_vars)
+                - sum(all_active_bools)
+            )
 
             logger.info("Running optimization solver")
             solver.Solve(model)
@@ -337,9 +457,6 @@ class ImagingSchedule:
             with open(coeffs_path, "wb") as f:
                 pickle.dump(self.all_coeffs, f)
         self.schedule = sorted_observations
-
-    def get_coeff(self, coeffs, start_var, size_var):
-        return coeffs[:][size_var][start_var]
 
     # def create_schedule_test1(self, pdet, universe_dir):
     #     schedule_path = Path(
