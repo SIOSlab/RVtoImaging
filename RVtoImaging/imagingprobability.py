@@ -54,6 +54,12 @@ class ImagingProbability:
 
         self.pops = {}
         self.pdets = {}
+        settings_str = (
+            f"{start_time.jd:.2f}_"
+            f"{end_time.jd:.2f}_"
+            f"{min_int_time.to(u.d).value:.2f}_"
+            f"{max_int_time.to(u.d).value:.2f}"
+        )
 
         # Loop through all the systems we want to calculate probability of
         # detection for
@@ -71,10 +77,9 @@ class ImagingProbability:
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
             # pdet_path = Path(system_path, "pdet.nc")
-            pdet_path = Path(system_path, "pdet.p")
-            pops_path = Path(system_path, "pops.p")
+            pdet_path = Path(system_path, f"pdet_{settings_str}.p")
+            pops_path = Path(system_path, f"pops_{settings_str}.p")
             if chains_path.exists():
-                # TODO MAKE THIS IF NOT EXISTS
                 if not pdet_path.exists():
                     logger.info(
                         (
@@ -195,11 +200,15 @@ class ImagingProbability:
         # max_time = OS.intCutoff
 
         # Setting up array of integration times
+        maxminratio = (max_time / min_time).decompose().value
         base = 2
-        maxn = int(np.emath.logn(base, (max_time / min_time).decompose().value))
+        maxn = int(round(np.emath.logn(base, maxminratio), 0))
         tmp = [(base**n) for n in range(0, maxn + 1)]
         tmp2 = [tmp[i] + tmp[i - 1] for i in range(1, len(tmp) - 1)]
-        int_times = min_time.to(u.d) * np.sort(np.array(tmp + tmp2))
+        combined = np.sort(np.array(tmp + tmp2))
+        filtered = [x for x in combined if x <= maxminratio]
+        filtered.append(maxminratio)
+        int_times = min_time.to(u.d) * filtered
         # int_times = (
         #     np.logspace(
         #         0,
