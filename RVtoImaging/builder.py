@@ -405,7 +405,7 @@ class RVtoImaging:
 
     def create_img_schedule(self, img_schedule_params):
         self.scheduler = ImagingSchedule(
-            img_schedule_params, self.pdet, self.universe_dir
+            img_schedule_params, self.pdet, self.universe_dir, self.workers
         )
 
     def list_parts(self) -> None:
