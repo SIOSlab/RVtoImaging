@@ -375,33 +375,33 @@ class RVtoImaging:
         )
 
     def create_pdet(self, pdet_params):
-        # with open(Path(pdet_params["script"])) as f:
-        #     exosims_script = json.loads(f.read())
-        # if "forced_seed" in pdet_params.keys():
-        #     # Make a copy of the exosims json and save it to the cache, then
-        #     # delete after
-        #     original_script = pdet_params["script"]
-        #     exosims_script["seed"] = pdet_params["forced_seed"]
-        #     tmp_file = Path(
-        #         self.cache_dir,
-        #         (
-        #             f"{pdet_params['script'].split('.')[0]}"
-        #             f"_seed_{exosims_script['seed']}.json"
-        #         ),
-        #     )
-        #     with open(tmp_file, "w") as f:
-        #         json.dump(exosims_script, f)
-        #     delete_tmp = True
-        #     pdet_params["script"] = str(tmp_file)
-        # else:
-        #     delete_tmp = False
+        with open(Path(pdet_params["script"])) as f:
+            exosims_script = json.loads(f.read())
+        if "forced_seed" in pdet_params.keys():
+            # Make a copy of the exosims json and save it to the cache, then
+            # delete after
+            original_script = pdet_params["script"]
+            exosims_script["seed"] = pdet_params["forced_seed"]
+            tmp_file = Path(
+                self.cache_dir,
+                (
+                    f"{pdet_params['script'].split('.')[0].replace('/', '_')}"
+                    f"_seed_{exosims_script['seed']}.json"
+                ),
+            )
+            with open(tmp_file, "w") as f:
+                json.dump(exosims_script, f)
+            delete_tmp = True
+            pdet_params["script"] = str(tmp_file)
+        else:
+            delete_tmp = False
         self.pdet = ImagingProbability(
             pdet_params, self.orbitfit, self.universe, self.workers
         )
-        # if delete_tmp:
-        #     tmp_file.unlink()
-        # if "forced_seed" in pdet_params.keys():
-        #     pdet_params["script"] = original_script
+        if delete_tmp:
+            tmp_file.unlink()
+        if "forced_seed" in pdet_params.keys():
+            pdet_params["script"] = original_script
 
     def create_img_schedule(self, img_schedule_params):
         self.scheduler = ImagingSchedule(
