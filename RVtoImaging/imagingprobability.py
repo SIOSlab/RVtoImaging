@@ -104,7 +104,7 @@ class ImagingProbability:
             if chains_spec_path.exists():
                 with open(chains_spec_path, "r") as f:
                     chains_spec = json.loads(f.read())
-                if not chains_spec["mcmc_success"]:
+                if not chains_spec["mcmc_converged"]:
                     logger.warning(
                         f"Skipping {universe.names[system_id]}, chains did not converge"
                     )
