@@ -95,11 +95,21 @@ class ImagingProbability:
                     )
                 )
                 # continue
+            chains_spec_path = Path(system_path, "spec.json")
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
             # pdet_path = Path(system_path, "pdet.nc")
             pdet_path = Path(system_path, f"pdet_{settings_str}.p")
             pops_path = Path(system_path, f"pops_{settings_str}.p")
+            if chains_spec_path.exists():
+                with open(chains_spec_path, "r") as f:
+                    chains_spec = json.loads(f.read())
+                if not chains_spec["mcmc_success"]:
+                    logger.warning(
+                        f"Skipping {universe.names[system_id]}, chains did not converge"
+                    )
+                    continue
+
             if chains_path.exists():
                 if not pdet_path.exists():
                     logger.info(
