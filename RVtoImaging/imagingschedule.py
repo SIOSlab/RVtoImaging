@@ -1,3 +1,4 @@
+import itertools
 import math
 import pickle
 from pathlib import Path
@@ -9,6 +10,7 @@ from astropy.time import Time
 from ortools.sat.python import cp_model
 from tqdm import tqdm
 
+from EXOSIMS.util.utils import dictToSortedStr, genHexStr
 from RVtoImaging.logger import logger
 
 
@@ -19,32 +21,36 @@ class ImagingSchedule:
 
     def __init__(self, params, pdet, universe_dir, workers):
         self.params = params
+        params["workers"] = workers
         self.sim_length = params["sim_length"]
         self.window_length = params["window_length"]
         self.block_multiples = params["block_multiples"]
         self.max_observations_per_star = params["max_observations_per_star"]
         self.planet_threshold = params["planet_threshold"]
         self.n_observations_above_threshold = params["n_observations_above_threshold"]
-        self.time_between_observations = params["time_between_observations"]
+        self.min_time_between_observations = params["min_time_between_observations"]
         self.log_search_progress = params["log_search_progress"]
-        self.max_time_in_seconds = params["max_time_in_seconds"]
+        self.max_time_in_seconds_stage_1 = params["max_time_in_seconds_stage_1"]
+        self.max_time_in_seconds_stage_2 = params["max_time_in_seconds_stage_2"]
+        self.hash = genHexStr(dictToSortedStr(params))
         logger.info("Creating Imaging Schedule")
         self.create_schedule(pdet, universe_dir, workers)
+        # Add schedule to the SS module
+
+        schedule = self.schedule.sort_values("time")[
+            ["sInd", "time", "int_time"]
+        ].to_numpy()
+        breakpoint()
+        pdet.SS.sim_fixed_schedule(schedule)
 
     def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
             universe_dir,
-            f"schedule_{self.sim_length}_{self.window_length}.p".replace(" ", ""),
-        )
-        coeffs_path = Path(
-            universe_dir,
-            f"coeffs_{self.sim_length}_{self.window_length}.p".replace(" ", ""),
+            f"schedule_{self.hash}.p".replace(" ", ""),
         )
         if schedule_path.exists():
             with open(schedule_path, "rb") as f:
-                sorted_observations = pickle.load(f)
-            with open(coeffs_path, "rb") as f:
-                self.all_coeffs = pickle.load(f)
+                final_df = pickle.load(f)
         else:
             SS = pdet.SS
             start_time = SS.TimeKeeping.missionStart
@@ -59,24 +65,19 @@ class ImagingSchedule:
             obs_times_datetime = obs_times.datetime
             obs_times_jd = obs_times.jd
             n_obs_times = len(obs_times)
+            block_inds = np.arange(0, n_obs_times, 1)
             # int_times = pdet.int_times
             # int_times = pdet.int_times[::3]
 
             min_int_time = self.window_length.to(u.d).value
-            int_times_blocks = self.block_multiples
+            int_times_blocks = sorted(self.block_multiples)
             int_times = np.array(self.block_multiples) * self.window_length.to(u.d)
             int_times_d = int_times.to(u.d).value
             n_int_times = len(int_times)
 
-            blocks_between_observations = math.ceil(
-                self.time_between_observations.to(u.d).value / min_int_time
+            min_blocks_between_observations = math.ceil(
+                self.min_time_between_observations.to(u.d).value / min_int_time
             )
-            time_sector_inds = {}
-            inds_per_sector = int(n_obs_times / self.n_time_sectors)
-            for i in range(self.n_time_sectors):
-                time_sector_inds[i] = np.arange(
-                    i * inds_per_sector, (i + 1) * inds_per_sector, 1
-                )
 
             mode = list(
                 filter(
@@ -91,18 +92,29 @@ class ImagingSchedule:
             all_pdets = pdet.pdets
             relevant_stars = list(all_pdets.keys())
 
+            # Getting overhead time
+            OS = SS.TargetList.OpticalSystem
+            mode = list(
+                filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+            )[0]
+            ohtime = SS.Observatory.settlingTime + mode["syst"]["ohTime"]
+            ohblocks = math.ceil((ohtime / self.window_length).decompose().value)
+
             # Setting up solver
             star_planets = {}
-            model = cp_model.CpModel()
-            solver = cp_model.CpSolver()
-            solver.parameters.num_search_workers = workers
-            solver.parameters.log_search_progress = self.log_search_progress
-            solver.parameters.max_time_in_seconds = self.max_time_in_seconds
+            stage_1_model = cp_model.CpModel()
+            stage_1_solver = cp_model.CpSolver()
+            stage_1_solver.parameters.num_search_workers = workers
+            stage_1_solver.parameters.log_search_progress = self.log_search_progress
+            stage_1_solver.parameters.max_time_in_seconds = (
+                self.max_time_in_seconds_stage_1
+            )
             # Coefficients (probability of detections)
             coeffs = {}
             # Dictionary keyed on stars that holds all variables
             self.vars = {}
             all_intervals = []
+            stage1vars = []
 
             # Input sanity checks
             max_schedule_int_time = max(int_times_d)
@@ -124,7 +136,7 @@ class ImagingSchedule:
                 f" scheduling ({min_schedule_int_time})."
             )
             #########################################
-            # Stage 1
+            # Stage 1 - Detections above threshold
             #########################################
             logger.info("Creating decision variables and coefficients for optimization")
             for star in tqdm(relevant_stars, desc="stars", position=0):
@@ -139,25 +151,506 @@ class ImagingSchedule:
                     dtype=bool,
                 )
                 self.vars[star] = {"vars": []}
-                for i in range(self.max_observations_per_star):
+                # This exists because if a star only has one planet then
+                # there's no point giving it the maximum number of observations
+                n_intervals = min(
+                    self.max_observations_per_star,
+                    self.n_observations_above_threshold * len(star_planets[star]),
+                )
+                for i in range(n_intervals):
+                    # Reduce domain of each interval by giving each interval a
+                    # unique set of start times. This may lower the upper bound
+                    # of the optimization but it dramatically reduces
+                    # computational cost, which improves the solution
+                    start_domain = block_inds[i::n_intervals]
+                    end_domain = []
+                    for block_size in int_times_blocks:
+                        end_domain.extend((start_domain + block_size).tolist())
+                    end_domain = np.unique(end_domain)
+                    end_domain = end_domain[end_domain < n_obs_times]
+
                     # Creating intervals that can be moved
-                    _start = model.NewIntVar(0, len(obs_times) - 1, f"{star} start {i}")
-                    _size = model.NewIntVarFromDomain(
+                    _start = stage_1_model.NewIntVarFromDomain(
+                        cp_model.Domain.FromValues(start_domain), f"{star} start {i}"
+                    )
+                    _size = stage_1_model.NewIntVarFromDomain(
                         cp_model.Domain.FromValues(int_times_blocks), f"{star} size {i}"
                     )
-                    _end = model.NewIntVar(1, len(obs_times), f"{star} end {i}")
-                    _active = model.NewBoolVar(f"{star} active {i}")
-                    _interval = model.NewOptionalIntervalVar(
+                    _end = stage_1_model.NewIntVarFromDomain(
+                        cp_model.Domain.FromValues(end_domain), f"{star} end {i}"
+                    )
+                    _active = stage_1_model.NewBoolVar(f"{star} active {i}")
+                    _interval = stage_1_model.NewOptionalIntervalVar(
                         _start, _size, _end, _active, f"{star} interval {i}"
                     )
                     all_intervals.append(_interval)
                     self.vars[star]["vars"].append(
                         {
+                            "star": star,
                             "start": _start,
                             "size": _size,
                             "end": _end,
                             "active": _active,
                             "interval": _interval,
+                            "start_domain": start_domain,
+                        }
+                    )
+                    stage1vars.extend([_start, _size, _end, _active, _interval])
+
+                # Create the coefficent array, for each observation var we have
+                # pdet values for each planet around a star
+                star_pdets = np.zeros(
+                    (len(star_planets[star]), n_int_times, n_obs_times)
+                )
+                for planet in star_planets[star]:
+                    # shape is (len(int_times), len(obs_times))
+                    planet_pdet = np.array(
+                        all_pdets[star]
+                        .sel(planet=planet)
+                        .interp(time=obs_times_datetime, int_time=int_times_d)
+                        .pdet
+                    )
+
+                    # CPSat solver only works with integers, cast pdet values to
+                    # integers by multiplying by 100 and cutting
+                    int_planet_pdet = np.array(100 * planet_pdet, dtype=int)
+                    # Loop through and set any observations that would go into
+                    # keepout to 0
+                    for obs_ind, _ in enumerate(obs_times_jd):
+                        for int_ind, int_time_d in enumerate(int_times_d):
+                            # Number of observing windows this observation spans
+                            n_windows = int(int_time_d / min_int_time)
+
+                            # Check that the observation doesn't intersect with keepout
+                            ko_vals = obs_window_ko[obs_ind : obs_ind + n_windows]
+                            # True if any ko_vals are False
+                            in_keepout = ~np.all(ko_vals)
+                            if in_keepout:
+                                int_planet_pdet[int_ind][obs_ind] = 0
+                    star_pdets[planet][:][:] = int_planet_pdet
+                self.vars[star]["coeffs"] = star_pdets
+
+            logger.info("Creating optimization constraints")
+            stage_1_model.AddNoOverlap(all_intervals)
+
+            # Constraint on blocks between observations of the same star
+            # This is done by looping over all the intervals for each star
+            # creating an intermediary boolean that is true when they are both
+            # active and adding a constraint that the intervals is above the user
+            # defined distance between observations
+            for star in relevant_stars:
+                star_var_list = self.vars[star]["vars"]
+                for i, i_var_set in enumerate(star_var_list[:-1]):
+                    # Get stage_1_model variables
+                    i_start = i_var_set["start"]
+                    i_end = i_var_set["end"]
+                    i_var_set["active"]
+                    for j, j_var_set in enumerate(star_var_list[i + 1 :]):
+                        # Get stage_1_model variables
+                        j_start = j_var_set["start"]
+                        j_end = j_var_set["end"]
+                        j_var_set["active"]
+
+                        # Create boolean that's active when both intervals are active
+                        # _bool = stage_1_model.NewBoolVar(
+                        #     f"{star} blocks between intervals {i} and {j}"
+                        # )
+                        # stage1vars.append(_bool)
+                        # stage_1_model.Add(i_active + j_active == 2).OnlyEnforceIf(
+                        #        _bool)
+                        # stage_1_model.Add(i_active + j_active <= 1).OnlyEnforceIf(
+                        #     _bool.Not()
+                        # )
+
+                        # Bool used to determine which distance we need to be checking
+                        i_before_j_bool = stage_1_model.NewBoolVar(
+                            f"{star} interval {i} starts before interval {j}"
+                        )
+                        stage_1_model.Add(i_start < j_start).OnlyEnforceIf(
+                            i_before_j_bool
+                        )
+                        stage_1_model.Add(i_start > j_start).OnlyEnforceIf(
+                            i_before_j_bool.Not()
+                        )
+
+                        # Add distance constraints
+                        stage_1_model.Add(
+                            j_start - i_end >= min_blocks_between_observations
+                        ).OnlyEnforceIf(i_before_j_bool)
+                        # ).OnlyEnforceIf(i_before_j_bool, _bool)
+                        stage_1_model.Add(
+                            i_start - j_end >= min_blocks_between_observations
+                        ).OnlyEnforceIf(i_before_j_bool.Not())
+                        # ).OnlyEnforceIf(i_before_j_bool.Not(), _bool)
+
+            # Constraint that makes sure that observations account for overhead time
+            # This is done by looping over all the intervals for each star
+            # creating an intermediary boolean that is true when they are both
+            # active and adding a constraint that the intervals is above the user
+            # defined distance between observations
+
+            # Get flat list of all interval vars
+            all_interval_dicts = []
+            for star in relevant_stars:
+                all_interval_dicts.extend(self.vars[star]["vars"])
+            interval_combinations = itertools.combinations(all_interval_dicts, 2)
+            for int1, int2 in interval_combinations:
+                int1_star = int1["star"]
+                int1_start = int1["start"]
+                int1_end = int1["end"]
+                int1["active"]
+                int1_interval = int1["interval"]
+
+                int2_star = int2["star"]
+                int2_start = int2["start"]
+                int2_end = int2["end"]
+                int2["active"]
+                int2_interval = int2["interval"]
+                if int1_star == int2_star:
+                    continue
+                # Boolean that's active when both intervals are active
+                # _bool =
+                # stage_1_model.NewBoolVar(f"{int1_interval} and {int2_interval}")
+                # stage1vars.append(_bool)
+                # stage_1_model.Add(int1_active + int2_active == 2).OnlyEnforceIf(_bool)
+                # stage_1_model.Add(int1_active + int2_active <= 1).OnlyEnforceIf(
+                #     _bool.Not()
+                # )
+
+                # Bool to determine which distance we need to be checking
+                int1_before_int2_bool = stage_1_model.NewBoolVar(
+                    f"{int1_interval} before {int2_interval}"
+                )
+                stage_1_model.Add(int1_start < int2_start).OnlyEnforceIf(
+                    int1_before_int2_bool
+                )
+                stage_1_model.Add(int1_start > int2_start).OnlyEnforceIf(
+                    int1_before_int2_bool.Not()
+                )
+
+                # Add distance constraints
+                stage_1_model.Add(int2_start - int1_end >= ohblocks).OnlyEnforceIf(
+                    int1_before_int2_bool
+                )
+                stage_1_model.Add(int1_start - int2_end >= ohblocks).OnlyEnforceIf(
+                    int1_before_int2_bool.Not()
+                )
+
+            logger.info("Setting up objective function")
+            # Maximize the summed probability of detection
+            obj_terms = []
+            all_bools = []
+            all_active_bools = []
+            all_size_vars = []
+            planet_terms = {}
+            for star in tqdm(relevant_stars, desc="Creating observation booleans"):
+                # list of the dictionary of interval variables
+                star_var_list = self.vars[star]["vars"]
+
+                # Pdet values for this star
+                coeffs = self.vars[star]["coeffs"]
+
+                # Dictionary keyed on [star][planet][interval_n] that gets used to
+                # create the constraint for the planets
+                planet_terms[star] = {}
+                n_intervals = min(
+                    self.max_observations_per_star,
+                    self.n_observations_above_threshold * len(star_planets[star]),
+                )
+                for interval_n in range(n_intervals):
+                    planet_terms[star][interval_n] = {}
+                    for planet in star_planets[star]:
+                        planet_terms[star][interval_n][planet] = []
+
+                # Loop over all the intervals, defined by start, size, end,
+                # active, for this star
+                for i, var_set in enumerate(star_var_list):
+                    start_var = var_set["start"]
+                    size_var = var_set["size"]
+                    active_var = var_set["active"]
+                    start_domain = var_set["start_domain"]
+                    all_active_bools.append(active_var)
+                    all_size_vars.append(size_var)
+                    set_bools = []
+                    for n_obs in start_domain:
+                        prev_above_threshold = 0
+                        for n_int, n_times_blocks in enumerate(int_times_blocks):
+                            if (n_obs + n_times_blocks) >= n_obs_times:
+                                # Cannot end after the last obs time
+                                continue
+                            current_above_threshold = sum(
+                                coeffs[:, n_int, n_obs] > 100 * self.planet_threshold
+                            )
+                            if current_above_threshold <= prev_above_threshold:
+                                # No benefit to this stage
+                                continue
+                            _bool = stage_1_model.NewBoolVar(f"{star} {n_int} {n_obs}")
+                            stage1vars.append(_bool)
+                            set_bools.append(_bool)
+                            stage_1_model.Add(start_var == n_obs).OnlyEnforceIf(_bool)
+                            stage_1_model.Add(size_var == n_times_blocks).OnlyEnforceIf(
+                                _bool
+                            )
+                            stage_1_model.Add(active_var == 1).OnlyEnforceIf(_bool)
+                            obj_terms.append(_bool * sum(coeffs[:, n_int, n_obs]))
+                            for planet in star_planets[star]:
+                                planet_terms[star][i][planet].append(
+                                    (_bool, coeffs[planet, n_int, n_obs], n_obs)
+                                )
+                            prev_above_threshold = current_above_threshold
+                    var_set["bools"] = set_bools
+                    all_bools.extend(set_bools)
+
+            # Maximize the number of planets that have interval_ns_above_threshold
+            # where the threshold is set by self.planet_threshold
+            planets_above_threshold = []
+            for star in tqdm(relevant_stars, desc="Adding threshold constraint"):
+                n_intervals = min(
+                    self.max_observations_per_star,
+                    self.n_observations_above_threshold * len(star_planets[star]),
+                )
+                for planet in star_planets[star]:
+                    # # Test that guarantees the planet is worth including
+                    # threshold_is_possible = False
+                    # possible_observation_blocks = []
+                    # for interval_n in range(n_intervals):
+                    #     for _, coeff, n_obs in planet_terms[star][interval_n][planet]:
+                    #         if coeff > 100 * self.planet_threshold:
+                    #             possible_observation_blocks.append((coeff, n_obs))
+                    # for_obs in itertools.combinations(possible_observation_blocks, 3):
+                    #     (c1, n1), (c2, n2), (c3, n3) = sorted(
+                    #         _obs, key=lambda tup: tup[1]
+                    #     )
+                    #     distance_constraint = (
+                    #         (n3 - n2) >= min_blocks_between_observations
+                    #     ) and ((n2 - n1) >= min_blocks_between_observations)
+
+                    #     threshold_constraint = np.any(
+                    #         np.array([c1, c2, c3]) < 100 * self.planet_threshold
+                    #     )
+                    #     if not threshold_constraint:
+                    #         breakpoint()
+
+                    #     if distance_constraint and threshold_constraint:
+                    #         threshold_is_possible = True
+                    #         break
+                    # if not threshold_is_possible:
+                    #     spacing_skipped += 1
+                    #     continue
+                    this_planet_bool = stage_1_model.NewBoolVar(
+                        f"{star}{planet} meets threshold"
+                    )
+                    stage1vars.append(this_planet_bool)
+                    planets_above_threshold.append(this_planet_bool)
+                    above_threshold_val = []
+                    for interval_n in range(n_intervals):
+                        for _bool, coeff, n_obs in planet_terms[star][interval_n][
+                            planet
+                        ]:
+                            if coeff > 100 * self.planet_threshold:
+                                above_threshold_val.append(_bool)
+                    stage_1_model.Add(
+                        sum(above_threshold_val) >= self.n_observations_above_threshold
+                    ).OnlyEnforceIf(this_planet_bool)
+            stage_1_model.Maximize(
+                sum(100 * max(self.block_multiples) * planets_above_threshold)
+                - sum(all_size_vars)
+                - sum(all_active_bools)
+            )
+
+            logger.info("Running optimization solver")
+            stage_1_solver.Solve(stage_1_model)
+
+            # # Stage 1 post processing
+            # planet_ub = max([len(item) for _, item in star_planets.items()])
+            # observation_list = []
+            # final_stars = []
+            # final_times = []
+            # final_int_times = []
+            # total_coeffs = []
+            # planet_thresholds = {}
+            # planet_coeffs = {}
+            # for pnum in range(planet_ub):
+            #     planet_coeffs[pnum] = []
+            #     planet_thresholds[pnum] = []
+            # # Create dataframe of the observations
+            # for star in relevant_stars:
+            #     star_var_list = self.vars[star]["vars"]
+            #     coeffs = self.vars[star]["coeffs"]
+            #     for i, var_set in enumerate(star_var_list):
+            #         start_var = var_set["start"]
+            #         size_var = var_set["size"]
+            #         active_var = var_set["active"]
+            #         if stage_1_solver.Value(active_var):
+            #             final_stars.append(star)
+            #             n_obs = stage_1_solver.Value(start_var)
+            #             n_int = stage_1_solver.Value(size_var)
+            #            n_int_block = np.where(n_int == np.array(int_times_blocks))[0][
+            #                 0
+            #             ]
+            #             final_times.append(obs_times[n_obs])
+            #             final_int_times.append(int_times[n_int_block])
+            #             above_threshold = False
+            #             summed_coeff = 0
+            #             for pnum in range(planet_ub):
+            #                 if pnum in star_planets[star]:
+            #                     coeff = coeffs[pnum, n_int_block, n_obs]
+            #                     summed_coeff += coeff
+            #                     above_threshold = coeff > 100 * self.planet_threshold
+            #                 else:
+            #                     coeff = np.nan
+            #                     above_threshold = np.nan
+            #                 planet_coeffs[pnum].append(coeff)
+            #                 planet_thresholds[pnum].append(above_threshold)
+
+            #             total_coeffs.append(summed_coeff)
+
+            # df1 = pd.DataFrame()
+            # df1["star"] = final_stars
+            # df1["time"] = final_times
+            # df1["int_time"] = final_int_times
+            # df1["total_coeffs"] = total_coeffs
+            # for pnum in range(planet_ub):
+            #     df1[f"coeff{pnum}"] = planet_coeffs[pnum]
+            # for pnum in range(planet_ub):
+            #     df1[f"threshold{pnum}"] = planet_thresholds[pnum]
+
+            # # Calculations for the number of detections for each
+            # unique_planets_above_threshold = 0
+            # planets_fitted = 0
+            # planet_data = {}
+            # for star in relevant_stars:
+            #     for planet in star_planets[star]:
+            #         planet_observations = df1.loc[df1.star == star][
+            #             f"threshold{planet}"
+            #         ].values
+            #         if len(planet_observations):
+            #             n_above_threshold = sum(planet_observations)
+            #             planet_data[planets_fitted] = {
+            #                 "star": star,
+            #                 "planet": planet,
+            #                 "n_above_threshold": n_above_threshold,
+            #             }
+            #             if n_above_threshold:
+            #                 unique_planets_above_threshold += 1
+            #         planets_fitted += 1
+            # planet_data = pd.DataFrame(planet_data).T
+
+            #########################################
+            # Stage 2 - Maximize pdet w/ remaining time
+            #########################################
+            fixed_star_observations = {}
+            for star in relevant_stars:
+                star_var_list = self.vars[star]["vars"]
+                star_observations = []
+                for i, var_set in enumerate(star_var_list):
+                    # start_var = var_set["start"]
+                    # size_var = var_set["size"]
+                    # end_var = var_set["end"]
+                    active_var = var_set["active"]
+                    if stage_1_solver.Value(active_var):
+                        star_observations.append(var_set)
+                fixed_star_observations[star] = star_observations
+
+            self.vars = {}
+            all_intervals = []
+            stage_2_model = cp_model.CpModel()
+            stage_2_solver = cp_model.CpSolver()
+            stage_2_solver.parameters.num_search_workers = workers
+            stage_2_solver.parameters.log_search_progress = self.log_search_progress
+            stage_2_solver.parameters.max_time_in_seconds = (
+                self.max_time_in_seconds_stage_2
+            )
+            for star in tqdm(relevant_stars, desc="stars", position=0):
+                # star_name = star.replace("_", " ")
+                star_ind = np.where(SS.TargetList.Name == star)[0][0]
+                star_xr = all_pdets[star].pdet
+                star_planets[star] = star_xr.planet.values
+                # Array of booleans for each observation window, for current star
+                # True means the star is observable
+                obs_window_ko = np.array(
+                    np.floor(np.interp(obs_times_jd, koTimes_jd, koMaps[star_ind])),
+                    dtype=bool,
+                )
+                self.vars[star] = {"vars": []}
+                star_fixed_observations = fixed_star_observations[star]
+                n_fixed_observations = len(star_fixed_observations)
+                n_variable_observations = (
+                    self.max_observations_per_star - n_fixed_observations
+                )
+                # Set up the times for each observation interval
+                # star_observing_bins[star] = (
+                #     np.digitize(
+                #         obs_times_jd,
+                #         np.linspace(
+                #             start_time_jd, end_time_jd, n_variable_observations + 1
+                #         ),
+                #     )
+                #     + n_fixed_observations
+                #     - 1
+                # )
+                for i in range(self.max_observations_per_star):
+                    if i < n_fixed_observations:
+                        # Fixed intervals
+                        _startval = stage_1_solver.Value(
+                            star_fixed_observations[i]["start"]
+                        )
+                        _start = stage_2_model.NewIntVar(
+                            _startval, _startval, f"{star} start {i}, fixed"
+                        )
+                        _sizeval = stage_1_solver.Value(
+                            star_fixed_observations[i]["size"]
+                        )
+                        _size = stage_2_model.NewIntVar(
+                            _sizeval, _sizeval, f"{star} size {i}, fixed"
+                        )
+                        _endval = stage_1_solver.Value(
+                            star_fixed_observations[i]["end"]
+                        )
+                        _end = stage_2_model.NewIntVar(
+                            _endval, _endval, f"{star} end {i}, fixed"
+                        )
+                        _active = stage_2_model.NewIntVar(
+                            1, 1, f"{star} active {i}, fixed"
+                        )
+                        _interval = stage_2_model.NewIntervalVar(
+                            _start, _size, _end, f"{star} interval {i}, fixed"
+                        )
+                    else:
+                        # interval_inds = np.where(star_observing_bins[star] == i)[0]
+                        start_domain = block_inds[i::n_variable_observations]
+                        end_domain = []
+                        for block_size in int_times_blocks:
+                            end_domain.extend((start_domain + block_size).tolist())
+                        end_domain = np.unique(end_domain)
+                        end_domain = end_domain[end_domain < n_obs_times]
+                        # Creating intervals that can be moved
+                        _start = stage_2_model.NewIntVarFromDomain(
+                            cp_model.Domain.FromValues(start_domain),
+                            f"{star} start {i}",
+                        )
+                        _size = stage_2_model.NewIntVarFromDomain(
+                            cp_model.Domain.FromValues(int_times_blocks),
+                            f"{star} size {i}",
+                        )
+                        _end = stage_2_model.NewIntVarFromDomain(
+                            cp_model.Domain.FromValues(end_domain),
+                            f"{star} end {i}",
+                        )
+                        _active = stage_2_model.NewBoolVar(f"{star} active {i}")
+                        _interval = stage_2_model.NewOptionalIntervalVar(
+                            _start, _size, _end, _active, f"{star} interval {i}"
+                        )
+                    all_intervals.append(_interval)
+                    self.vars[star]["vars"].append(
+                        {
+                            "star": star,
+                            "start": _start,
+                            "size": _size,
+                            "end": _end,
+                            "active": _active,
+                            "interval": _interval,
+                            "start_domain": start_domain,
                         }
                     )
 
@@ -194,44 +687,11 @@ class ImagingSchedule:
                     star_pdets[planet][:][:] = int_planet_pdet
                 self.vars[star]["coeffs"] = star_pdets
 
-                # Set up the planet sectors
-                # planet_sectors = np.zeros((len(star_planets[star]), n_obs_times))
-                # for planet in star_planets[star]:
-                #     planet_pop = pdet.pops[star][planet]
-                #     pop_T = np.median(planet_pop.T)
-
-                #     # These orb_sectors separate an orbit into 8 different sectors of
-                #     # the orbit, which can be used to space out observations for bette
-                #     # orbital coverage
-                #     orb_sector_times = obs_times_jd - start_time_jd
-                #     obs_orb_sectors = np.digitize(
-                #         orb_sector_times % pop_T.to(u.d).value,
-                #         np.linspace(0, pop_T.to(u.d).value, 9),
-                #     )
-                #     unique_orb_sectors = np.unique(obs_orb_sectors)
-                #     orb_sector_vals = {}
-
-                # orb_sectors_to_observe is a orb_sector we can observe,
-                # constraints will be added based on how many there are
-                # orb_sectors_to_observe = []
-                # orb_sector_maxes = []
-                # for orb_sector in unique_orb_sectors:
-                #     orb_sector_inds = np.where(obs_orb_sectors == orb_sector)[0]
-                #     orb_sector_vals[orb_sector] = planet_pdet.values[
-                #         orb_sector_inds
-                #     ]
-                #     if np.max(orb_sector_vals[orb_sector]) > self.planet_threshold:
-                #         orb_sector_maxes.append(
-                #             np.median(orb_sector_vals[orb_sector])
-                #         )
-                #     orb_sectors_to_observe.append(orb_sector)
-                # planet_sectors.append(obs_orb_sectors[obs_ind])
-
             logger.info("Creating optimization constraints")
             # Constraint on one star observation per observation time
             # for obs_time_jd in tqdm(obs_times_jd, desc="no concurrent observations"):
             #     model.Add(sum(concurrent_obs[obs_time_jd]) <= 1)
-            model.AddNoOverlap(all_intervals)
+            stage_2_model.AddNoOverlap(all_intervals)
 
             # Constraint on blocks between observations
             # This is done by looping over all the intervals for each star
@@ -244,42 +704,136 @@ class ImagingSchedule:
                     # Get model variables
                     i_start = i_var_set["start"]
                     i_end = i_var_set["end"]
-                    i_active = i_var_set["active"]
+                    i_var_set["active"]
                     for j, j_var_set in enumerate(star_var_list[i + 1 :]):
                         # Get model variables
                         j_start = j_var_set["start"]
                         j_end = j_var_set["end"]
-                        j_active = j_var_set["active"]
+                        j_var_set["active"]
 
                         # Create boolean that's active when both intervals are active
-                        _bool = model.NewBoolVar(
-                            f"{star} blocks between intervals {i} and {j}"
-                        )
-                        model.Add(i_active + j_active == 2).OnlyEnforceIf(_bool)
-                        model.Add(i_active + j_active <= 1).OnlyEnforceIf(_bool.Not())
+                        # _bool = stage_2_model.NewBoolVar(
+                        #     f"{star} blocks between intervals {i} and {j}"
+                        # )
+                        # stage_2_model.Add(i_active + j_active == 2).OnlyEnforceIf(
+                        #        _bool)
+                        # stage_2_model.Add(i_active + j_active <= 1).OnlyEnforceIf(
+                        #     _bool.Not()
+                        # )
 
                         # Bool used to determine which distance we need to be checking
-                        i_before_j_bool = model.NewBoolVar(
+                        i_before_j_bool = stage_2_model.NewBoolVar(
                             f"{star} interval {i} starts before interval {j}"
                         )
-                        model.Add(i_start < j_start).OnlyEnforceIf(i_before_j_bool)
-                        model.Add(i_start > j_start).OnlyEnforceIf(
+                        stage_2_model.Add(i_start < j_start).OnlyEnforceIf(
+                            i_before_j_bool
+                        )
+                        stage_2_model.Add(i_start > j_start).OnlyEnforceIf(
                             i_before_j_bool.Not()
                         )
 
                         # Add distance constraints
-                        model.Add(
-                            j_start - i_end >= blocks_between_observations
-                        ).OnlyEnforceIf(i_before_j_bool, _bool)
-                        model.Add(
-                            i_start - j_end >= blocks_between_observations
-                        ).OnlyEnforceIf(i_before_j_bool.Not(), _bool)
-            # Constraint on total integration time
-            # model.Add(sum(int_coeffs) <= len(obs_times))
+                        stage_2_model.Add(
+                            j_start - i_end >= min_blocks_between_observations
+                        ).OnlyEnforceIf(i_before_j_bool)
+                        stage_2_model.Add(
+                            i_start - j_end >= min_blocks_between_observations
+                        ).OnlyEnforceIf(i_before_j_bool.Not())
 
-            # Constraint on observations per star
-            # for star in relevant_stars:
-            #     model.Add(sum(star_obs[star]) <= 10)
+            # Constraint that makes sure that observations account for overhead time
+            # This is done by looping over all the intervals for each star
+            # creating an intermediary boolean that is true when they are both
+            # active and adding a constraint that the intervals is above the user
+            # defined distance between observations
+            # for star1_ind, star1 in enumerate(relevant_stars[:-1]):
+            #     star1_var_list = self.vars[star1]["vars"]
+            #     for i, star1_var_set in enumerate(star1_var_list):
+            #         star1i_start = star1_var_set["start"]
+            #         star1i_end = star1_var_set["end"]
+            #         star1i_active = star1_var_set["active"]
+            #        for star2_ind, star2 in enumerate(relevant_stars[star1_ind + 1 :]):
+            #             star2_var_list = self.vars[star2]["vars"]
+            #             for j, star2_var_set in enumerate(star2_var_list):
+            #                 star2j_start = star2_var_set["start"]
+            #                 star2j_end = star2_var_set["end"]
+            #                 star2j_active = star2_var_set["active"]
+
+            #                 # Boolean that's active when both intervals are active
+            #                 _bool = stage_2_model.NewBoolVar(
+            #                     f"{star1} interval {i} and {star2} interval {j}"
+            #                 )
+            #                 stage_2_model.Add(
+            #                     star1i_active + star2j_active == 2
+            #                 ).OnlyEnforceIf(_bool)
+            #                 stage_2_model.Add(
+            #                     star1i_active + star2j_active <= 1
+            #                 ).OnlyEnforceIf(_bool.Not())
+
+            #                 # Bool to determine which distance we need to be checking
+            #                 star1i_before_star2j_bool = stage_2_model.NewBoolVar(
+            #                     f"{star1} interval {i} starts before "
+            #                     f"{star2} interval {j}"
+            #                 )
+            #                 stage_2_model.Add(
+            #                     star1i_start < star2j_start
+            #                 ).OnlyEnforceIf(star1i_before_star2j_bool)
+            #                 stage_2_model.Add(
+            #                     star1i_start > star2j_start
+            #                 ).OnlyEnforceIf(star1i_before_star2j_bool.Not())
+
+            #                 # Add distance constraints
+            #                 stage_2_model.Add(
+            #                     star2j_start - star1i_end >= ohblocks
+            #                 ).OnlyEnforceIf(star1i_before_star2j_bool, _bool)
+            #                 stage_2_model.Add(
+            #                     star1i_start - star2j_end >= ohblocks
+            #                 ).OnlyEnforceIf(star1i_before_star2j_bool.Not(), _bool)
+            # Get flat list of all interval vars
+            all_interval_dicts = []
+            for star in relevant_stars:
+                all_interval_dicts.extend(self.vars[star]["vars"])
+            interval_combinations = itertools.combinations(all_interval_dicts, 2)
+            for int1, int2 in interval_combinations:
+                int1_star = int1["star"]
+                int1_start = int1["start"]
+                int1_end = int1["end"]
+                int1["active"]
+                int1_interval = int1["interval"]
+
+                int2_star = int2["star"]
+                int2_start = int2["start"]
+                int2_end = int2["end"]
+                int2["active"]
+                int2_interval = int2["interval"]
+                if int1_star == int2_star:
+                    continue
+                # Boolean that's active when both intervals are active
+                # _bool =
+                # stage_1_model.NewBoolVar(f"{int1_interval} and {int2_interval}")
+                # stage1vars.append(_bool)
+                # stage_1_model.Add(int1_active + int2_active == 2).OnlyEnforceIf(_bool)
+                # stage_1_model.Add(int1_active + int2_active <= 1).OnlyEnforceIf(
+                #     _bool.Not()
+                # )
+
+                # Bool to determine which distance we need to be checking
+                int1_before_int2_bool = stage_2_model.NewBoolVar(
+                    f"{int1_interval} before {int2_interval}"
+                )
+                stage_2_model.Add(int1_start < int2_start).OnlyEnforceIf(
+                    int1_before_int2_bool
+                )
+                stage_2_model.Add(int1_start > int2_start).OnlyEnforceIf(
+                    int1_before_int2_bool.Not()
+                )
+
+                # Add distance constraints
+                stage_2_model.Add(int2_start - int1_end >= ohblocks).OnlyEnforceIf(
+                    int1_before_int2_bool
+                )
+                stage_2_model.Add(int1_start - int2_end >= ohblocks).OnlyEnforceIf(
+                    int1_before_int2_bool.Not()
+                )
 
             logger.info("Setting up objective function")
             # Maximize the summed probability of detection
@@ -295,13 +849,13 @@ class ImagingSchedule:
                 # Pdet values for this star
                 coeffs = self.vars[star]["coeffs"]
 
-                # Dictionary keyed on [star][planet][sector] that gets used to
+                # Dictionary keyed on [star][planet][interval_n] that gets used to
                 # create the constraint for the planets
                 planet_terms[star] = {}
-                for sector in range(self.n_time_sectors):
-                    planet_terms[star][sector] = {}
+                for interval_n in range(self.max_observations_per_star):
+                    planet_terms[star][interval_n] = {}
                     for planet in star_planets[star]:
-                        planet_terms[star][sector][planet] = []
+                        planet_terms[star][interval_n][planet] = []
 
                 # Loop over all the intervals, defined by start, size, end,
                 # active, for this star
@@ -309,70 +863,53 @@ class ImagingSchedule:
                     start_var = var_set["start"]
                     size_var = var_set["size"]
                     active_var = var_set["active"]
+                    start_domain = var_set["start_domain"]
                     all_active_bools.append(active_var)
                     all_size_vars.append(size_var)
                     set_bools = []
-                    for n_int, n_times_blocks in enumerate(int_times_blocks):
-                        for n_obs in range(n_obs_times):
-                            if n_obs in time_sector_inds[i]:
-                                _bool = model.NewBoolVar(f"{star} {n_int} {n_obs}")
-                                set_bools.append(_bool)
-                                model.Add(start_var == n_obs).OnlyEnforceIf(_bool)
-                                model.Add(size_var == n_times_blocks).OnlyEnforceIf(
-                                    _bool
+                    for n_obs in start_domain:
+                        prev_coeff_high = 0
+                        for n_int, n_times_blocks in enumerate(int_times_blocks):
+                            if (n_obs + n_times_blocks) >= n_obs_times:
+                                # Cannot end after the last obs time
+                                continue
+                            current_coeff_sum = sum(coeffs[:, n_int, n_obs])
+                            if prev_coeff_high >= current_coeff_sum:
+                                # No benefit to using a longer int time
+                                continue
+                            _bool = stage_2_model.NewBoolVar(f"{star} {n_int} {n_obs}")
+                            set_bools.append(_bool)
+                            stage_2_model.Add(start_var == n_obs).OnlyEnforceIf(_bool)
+                            stage_2_model.Add(size_var == n_times_blocks).OnlyEnforceIf(
+                                _bool
+                            )
+                            stage_2_model.Add(active_var == 1).OnlyEnforceIf(_bool)
+                            obj_terms.append(_bool * sum(coeffs[:, n_int, n_obs]))
+                            for planet in star_planets[star]:
+                                planet_terms[star][i][planet].append(
+                                    (_bool, coeffs[planet, n_int, n_obs])
                                 )
-                                model.Add(active_var == 1).OnlyEnforceIf(_bool)
-                                obj_terms.append(_bool * sum(coeffs[:, n_int, n_obs]))
-                                for planet in star_planets[star]:
-                                    planet_terms[star][i][planet].append(
-                                        (_bool, coeffs[planet, n_int, n_obs])
-                                    )
+                            prev_coeff_high = current_coeff_sum
                     var_set["bools"] = set_bools
                     all_bools.extend(set_bools)
-
-            # Set up planet constraint, number of observations above 0.5 pdet
-            # are less than 4
-            # for star in relevant_stars:
-            #     for planet in star_planets[star]:
-            #         # planets_above_threshold.append(
-            #         #     model.NewBoolVar(f"{star}{planet} meets threshold")
-            #         # )
-            #         above_threshold_val = []
-            #         for sector in range(self.n_time_sectors):
-            #             for _bool, coeff in planet_terms[star][sector][planet]:
-            #                 if coeff > self.planet_threshold:
-            #                     above_threshold_val.append(_bool)
-            #         model.Add(sum(above_threshold_val) <= self.max_planet_observations
-            # model.Maximize(sum(obj_terms))
-            planets_above_threshold = []
-            for star in relevant_stars:
-                for planet in star_planets[star]:
-                    this_planet_bool = model.NewBoolVar(
-                        f"{star}{planet} meets threshold"
-                    )
-                    planets_above_threshold.append(this_planet_bool)
-                    above_threshold_val = []
-                    for sector in range(self.n_time_sectors):
-                        for _bool, coeff in planet_terms[star][sector][planet]:
-                            if coeff > 100 * self.planet_threshold:
-                                above_threshold_val.append(_bool)
-                    model.Add(
-                        sum(above_threshold_val) >= self.n_observations_above_threshold
-                    ).OnlyEnforceIf(this_planet_bool)
-            model.Maximize(
-                sum(100 * max(self.block_multiples) * planets_above_threshold)
-                - sum(all_size_vars)
-                - sum(all_active_bools)
+            stage_2_model.Maximize(
+                100 * sum(obj_terms) - sum(all_size_vars) - sum(all_active_bools)
             )
+            # Clear memory before solve
+            del stage_1_model
+            del stage_1_solver
+            for var in stage1vars:
+                del var
+            stage_2_solver.Solve(stage_2_model)
 
-            logger.info("Running optimization solver")
-            solver.Solve(model)
-
+            # Stage 2 post processing
             planet_ub = max([len(item) for _, item in star_planets.items()])
-            observation_list = []
+            final_sInds = []
             final_stars = []
             final_times = []
+            final_times_jd = []
             final_int_times = []
+            final_int_times_d = []
             total_coeffs = []
             planet_thresholds = {}
             planet_coeffs = {}
@@ -387,15 +924,20 @@ class ImagingSchedule:
                     start_var = var_set["start"]
                     size_var = var_set["size"]
                     active_var = var_set["active"]
-                    if solver.Value(active_var):
-                        final_stars.append(star)
-                        n_obs = solver.Value(start_var)
-                        n_int = solver.Value(size_var)
+                    if stage_2_solver.Value(active_var):
+                        n_obs = stage_2_solver.Value(start_var)
+                        n_int = stage_2_solver.Value(size_var)
                         n_int_block = np.where(n_int == np.array(int_times_blocks))[0][
                             0
                         ]
+                        final_sInds.append(
+                            np.where(pdet.SS.TargetList.Name == star)[0][0]
+                        )
+                        final_stars.append(star)
                         final_times.append(obs_times[n_obs])
+                        final_times_jd.append(obs_times_jd[n_obs])
                         final_int_times.append(int_times[n_int_block])
+                        final_int_times_d.append(int_times[n_int_block].to(u.d).value)
                         above_threshold = False
                         summed_coeff = 0
                         for pnum in range(planet_ub):
@@ -411,52 +953,22 @@ class ImagingSchedule:
 
                         total_coeffs.append(summed_coeff)
 
-            df = pd.DataFrame()
-            df["star"] = final_stars
-            df["time"] = final_times
-            df["int_time"] = final_int_times
-            df["total_coeffs"] = total_coeffs
+            final_df = pd.DataFrame()
+            final_df["sInd"] = final_sInds
+            final_df["star"] = final_stars
+            final_df["time"] = final_times
+            final_df["time_jd"] = final_times_jd
+            final_df["int_time"] = final_int_times
+            final_df["int_time_d"] = final_int_times_d
+            final_df["total_coeffs"] = total_coeffs
             for pnum in range(planet_ub):
-                df[f"coeff{pnum}"] = planet_coeffs[pnum]
+                final_df[f"coeff{pnum}"] = planet_coeffs[pnum]
             for pnum in range(planet_ub):
-                df[f"threshold{pnum}"] = planet_thresholds[pnum]
+                final_df[f"threshold{pnum}"] = planet_thresholds[pnum]
 
-            # Calculations for the number of detections for each
-            unique_planets_above_threshold = 0
-            planets_fitted = 0
-            planet_data = {}
-            for star in relevant_stars:
-                for planet in star_planets[star]:
-                    planet_observations = df.loc[df.star == star][
-                        f"threshold{planet}"
-                    ].values
-                    if len(planet_observations):
-                        n_above_threshold = sum(planet_observations)
-                        planet_data[planets_fitted] = {
-                            "star": star,
-                            "planet": planet,
-                            "n_above_threshold": n_above_threshold,
-                        }
-                        if n_above_threshold:
-                            unique_planets_above_threshold += 1
-                    planets_fitted += 1
-            pd.DataFrame(planet_data).T
-            breakpoint()
-
-            observation_times = Time(
-                [observation.time.jd for observation in observation_list],
-                format="jd",
-                scale="tai",
-            )
-            # Sort the observations by time
-            sorted_observations = np.array(observation_list)[
-                np.argsort(observation_times)
-            ]
             with open(schedule_path, "wb") as f:
-                pickle.dump(sorted_observations, f)
-            with open(coeffs_path, "wb") as f:
-                pickle.dump(self.all_coeffs, f)
-        self.schedule = sorted_observations
+                pickle.dump(final_df, f)
+        self.schedule = final_df
 
     # def create_schedule_test1(self, pdet, universe_dir):
     #     schedule_path = Path(

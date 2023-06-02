@@ -1,49 +1,45 @@
-import copy
 import json
 from pathlib import Path
 
 import astropy.units as u
 import numpy as np
-import pandas as pd
 from astroplan import AirmassConstraint, AtNightConstraint
 from astropy.time import Time
 
-from rvsearch import search
 from RVtoImaging.builder import BaseBuilder
 
-
 # def run_scenario(seed, builder, rv_dataset_info):
-def run_scenario(args):
-    seed, builder, run_sets = args
+# def run_scenario(args):
+#     seed, builder, run_sets = args
 
-    builder = copy.deepcopy(builder)
-    builder.seeds = [seed]
-    for dataset_name, obs_runs in run_sets.items():
-        print(f"Seed {seed} for {dataset_name} dataset")
-        builder.rv_dataset_params = {
-            "dataset_name": dataset_name,
-            "rv_observing_runs": obs_runs,
-            "available_targets_file": ".cache/NETS100.csv",
-            "approx_systems_to_observe": approx_systems_to_observe,
-        }
-        builder.run_seeds()
-    # builder.rv_dataset_params = {
-    #     "dataset_name": dataset_name,
-    #     "rv_observing_runs": obs_runs,
-    #     "available_targets_file": ".cache/NETS100.csv",
-    #     "approx_systems_to_observe": 85,
-    # }
-    # builder.run_seeds()
+#     builder = copy.deepcopy(builder)
+#     builder.seeds = [seed]
+#     for dataset_name, obs_runs in run_sets.items():
+#         print(f"Seed {seed} for {dataset_name} dataset")
+#         builder.rv_dataset_params = {
+#             "dataset_name": dataset_name,
+#             "rv_observing_runs": obs_runs,
+#             "available_targets_file": ".cache/NETS100.csv",
+#             "approx_systems_to_observe": approx_systems_to_observe,
+#         }
+#         builder.run_seeds()
+#     # builder.rv_dataset_params = {
+#     #     "dataset_name": dataset_name,
+#     #     "rv_observing_runs": obs_runs,
+#     #     "available_targets_file": ".cache/NETS100.csv",
+#     #     "approx_systems_to_observe": 85,
+#     # }
+#     # builder.run_seeds()
 
 
-def run_search(path):
-    base_path = Path(".cache/universe_309864d7/HIP_101997/")
-    rv_df = pd.read_csv(Path(base_path, path, "rv.csv"))
-    print("test")
-    searcher = search.Search(
-        rv_df, workers=7, mcmc=True, verbose=True, max_planets=4, n_vary=np.inf
-    )
-    searcher.run_search()
+# def run_search(path):
+#     base_path = Path(".cache/universe_309864d7/HIP_101997/")
+#     rv_df = pd.read_csv(Path(base_path, path, "rv.csv"))
+#     print("test")
+#     searcher = search.Search(
+#         rv_df, workers=7, mcmc=True, verbose=True, max_planets=4, n_vary=np.inf
+#     )
+#     searcher.run_search()
 
 
 if __name__ == "__main__":
@@ -52,7 +48,6 @@ if __name__ == "__main__":
     with open(settings_file, "r") as f:
         settings = json.load(f)
     cache_dir = settings["cache_dir"]
-    threads = settings["threads"]
     workers = settings["workers"]
     first_seed = settings["first_seed"]
     last_seed = settings["last_seed"]
@@ -237,51 +232,55 @@ if __name__ == "__main__":
     }
 
     seeds = [int(seed) for seed in np.arange(first_seed, last_seed + 1, 1)]
+    builder.rv_dataset_params = {
+        "dataset_name": "conservative",
+        "rv_observing_runs": conservative,
+        "available_targets_file": f"{cache_dir}/NETS100.csv",
+        "approx_systems_to_observe": approx_systems_to_observe,
+    }
 
-    for seed in seeds:
-        builder.seeds = [seed]
-        for dataset_name, obs_runs in run_sets.items():
-            builder.rv_dataset_params = {
-                "dataset_name": dataset_name,
-                "rv_observing_runs": obs_runs,
-                "available_targets_file": f"{cache_dir}/NETS100.csv",
-                "approx_systems_to_observe": approx_systems_to_observe,
-            }
-            builder.run_seeds()
+    # for seed in seeds:
+    #     builder.seeds = [seed]
+    #     for dataset_name, obs_runs in run_sets.items():
+    #         builder.rv_dataset_params = {
+    #             "dataset_name": dataset_name,
+    #             "rv_observing_runs": obs_runs,
+    #             "available_targets_file": f"{cache_dir}/NETS100.csv",
+    #             "approx_systems_to_observe": approx_systems_to_observe,
+    #         }
+    #         builder.run_seeds()
     # args = []
     # for seed in seeds:
     #     args.append((seed, builder, run_sets))
 
-    # all_args = list(itertools.product(seeds, [builder], run_sets.items()))
-    # tasks = itertools.starmap(run_scenario, args)
-    # with ThreadPoolExecutor(max_workers=threads) as executor:
-    #     #     args = [seed, builder, run_sets]
-    #     executor.map(run_scenario, args)
-    # runs = [
-    #     Path(
-    #         "runs_2_ms_instruments_0330de54EPRV_42694d12NEID_50cms_b083fb86NETS_56a937d6"
-    #     ),
-    #     Path(
-    #         "runs_2_ms_instruments_0330de54NEID_40cms_93e594cbNEID_50cms_b083fb86NETS_56a937d6"
-    #     ),
-    # ]
-    # with ThreadPoolExecutor(max_workers=1) as executor:
-    #     executor.map(run_search, runs)
-
-    # RUN THE SEEDS
     ######################################################################
     # Probability of detection
     ######################################################################
-    # builder.pdet_params = {
-    #     "construction_method": "multivariate gaussian",
-    #     "cov_samples": 1000,
-    #     "number_of_orbits": 1000,
-    #     "systems_of_interest": [0],
-    #     "start_time": mission_start,
-    #     "end_time": mission_start + 10 * u.yr,
-    # }
+    builder.pdet_params = {
+        "script": "scripts/caseA.json",
+        "construction_method": {"name": "multivariate gaussian", "cov_samples": 1000},
+        "number_of_orbits": 1000,
+        "systems_of_interest": [0],
+        "start_time": mission_start,
+        "end_time": mission_start + 10 * u.yr,
+        "min_int_time": 4 * u.hr,
+        "max_int_time": 10 * u.day,
+    }
 
-    # builder.probability_of_detection()
+    builder.img_schedule_params = {
+        "sim_length": 1 * u.yr,
+        "window_length": 8 * u.hr,
+        "block_multiples": [1, 3, 15],
+        "max_observations_per_star": 10,
+        "planet_threshold": 0.9,
+        "n_observations_above_threshold": 3,
+        "min_time_between_observations": 10 * u.d,
+        "max_time_in_seconds_stage_1": 20 * 60,
+        "max_time_in_seconds_stage_2": 40 * 60,
+        "log_search_progress": True,
+    }
+    builder.seeds = seeds
+    builder.run_seeds()
 
     # builder.precursor_data.list_parts()
 

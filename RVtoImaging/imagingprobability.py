@@ -35,6 +35,21 @@ class ImagingProbability:
         with open(script_path) as f:
             specs = json.loads(f.read())
         self.SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
+
+        # Replace the initialized SS module's planets with all the ones
+        # from the universe
+        for system, orig_sInd, name in zip(
+            universe.systems, universe.SU.sInds, universe.SU.TargetList.Name
+        ):
+            if name in self.SS.TargetList.Name:
+                target_sInd = np.where(self.SS.TargetList.Name == name)[0][0]
+                self.SS = utils.replace_EXOSIMS_system(self.SS, target_sInd, system)
+                self.SS.TargetList.I[target_sInd] = universe.SU.TargetList.I[orig_sInd]
+        self.SS.SimulatedUniverse.gen_physical_properties(**specs)
+        self.SS.SimulatedUniverse.init_systems()
+
+        # for sInd in
+        # utils.replace_EXOSIMS_system(self.SS, sInd, )
         self.n_fits = params["number_of_orbits"]
         start_time = params["start_time"]
         end_time = params["end_time"]
@@ -54,11 +69,17 @@ class ImagingProbability:
 
         self.pops = {}
         self.pdets = {}
+        # tmp = pd.json_normalize(specs, sep=',')
+        # items = []
+        self.script_hash = utils.EXOSIMS_script_hash(script_path)
+        # for col in tmp.columns:
+        #     val = tmp[col]
         settings_str = (
             f"{start_time.jd:.2f}_"
             f"{end_time.jd:.2f}_"
             f"{min_int_time.to(u.d).value:.2f}_"
-            f"{max_int_time.to(u.d).value:.2f}"
+            f"{max_int_time.to(u.d).value:.2f}_"
+            f"{self.script_hash}"
         )
 
         # Loop through all the systems we want to calculate probability of
@@ -172,7 +193,9 @@ class ImagingProbability:
         ZL = TL.ZodiacalLight
         IWA = OS.IWA
         OWA = OS.OWA
-        mid_WA = (IWA + OWA) / 2
+        mid_WA = (
+            np.array([(IWA.to(u.arcsec).value + OWA.to(u.arcsec).value) / 2]) * u.arcsec
+        )
         fZ = ZL.fZ0
         fEZ = ZL.fEZ0
         mode = list(
@@ -185,10 +208,14 @@ class ImagingProbability:
         #         SS.StarCatalog.Name == system.star.name.replace("_", " ")
         #     )[0][0]
         dMag0s = []
+        # Getting correct array format
+        fZ = np.array(fZ.to(1 / u.arcsec**2).value, ndmin=1) * (1 / u.arcsec**2)
+        fEZ = np.array(fEZ.to(1 / u.arcsec**2).value, ndmin=1) * (1 / u.arcsec**2)
         for int_time in int_times:
+            _int_time = np.array(int_time.to(u.d).value, ndmin=1) * u.d
             dMag0s.append(
                 OS.calc_dMag_per_intTime(
-                    int_time, TL, target_sInd, fZ, fEZ, mid_WA, mode
+                    _int_time, TL, target_sInd, fZ, fEZ, mid_WA, mode
                 )
             )
         return dMag0s

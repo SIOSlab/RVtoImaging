@@ -2,6 +2,7 @@ import copy
 import itertools
 import json
 import subprocess
+from collections.abc import MutableMapping
 from pathlib import Path
 
 import astropy.io.fits as fits
@@ -11,6 +12,7 @@ import pandas as pd
 from keplertools import fun as kt
 from tqdm import tqdm
 
+from EXOSIMS.util.utils import dictToSortedStr, genHexStr
 from RVtoImaging.logger import logger
 
 
@@ -309,12 +311,12 @@ def prev_best_fit(dir, survey_name):
 def replace_EXOSIMS_system(SS, sInd, system):
     SU = SS.SimulatedUniverse
     star_planets = np.where(SU.plan2star == sInd)[0]
-    print(
-        (
-            f"Adding {len(system.planets)} to {system.star.name}, sInd {sInd}."
-            f"\n{system.getpattr('a')}"
-        )
-    )
+    # print(
+    #     (
+    #         f"Adding {len(system.planets)} to {system.star.name}, sInd {sInd}."
+    #         f"\n{system.getpattr('a')}"
+    #     )
+    # )
     if len(star_planets) > 0:
         first_ind = star_planets[0]
         last_ind = star_planets[-1]
@@ -338,9 +340,9 @@ def replace_EXOSIMS_system(SS, sInd, system):
     #         inds = np.where(SU.plan2star == replacement_ind)[0]
     #         first_ind = inds[0]
     #         last_ind = inds[-1]
-    atts = ["a", "e", "inc", "O", "w", "M0", "Mp", "Rp", "p"]
-    RVtools_atts = ["a", "e", "inc", "W", "w", "M0", "mass", "radius", "p"]
-    for att, rvtools_att in zip(atts, RVtools_atts):
+    atts = ["a", "e", "I", "O", "w", "M0", "Mp", "Rp", "p"]
+    RVtoImaging_atts = ["a", "e", "inc", "W", "w", "M0", "mass", "radius", "p"]
+    for att, rvtools_att in zip(atts, RVtoImaging_atts):
         # Get the parts of the array before and after the star to be replaced
         att_arr = getattr(SU, att)
         first_part = att_arr[:first_ind]
@@ -581,3 +583,46 @@ def compare_schedule(builder):
     # raw_char = count_DRM_char(original_DRM)
     # percursor_char = count_DRM_char(SS.DRM)
     return results
+
+
+def flatten_dict(dictionary, parent_key="", separator="_"):
+    items = []
+    for key, value in dictionary.items():
+        new_key = parent_key + separator + key if parent_key else key
+        if isinstance(value, MutableMapping):
+            items.extend(flatten_dict(value, new_key, separator=separator).items())
+        else:
+            items.append((new_key, value))
+    return dict(items)
+
+
+def EXOSIMS_script_hash(script):
+    valid_types = [str, int, float, u.quantity.Quantity, type(None)]
+    with open(script) as f:
+        specs = json.loads(f.read())
+    flattened_dict = flatten_dict(specs)
+    all_info = []
+    rejected = []
+    list_of_dicts = [
+        "scienceInstruments",
+        "starlightSuppressionSystems",
+        "observingModes",
+    ]
+    for key in list_of_dicts:
+        key_list = flattened_dict[key]
+        for _dict in key_list:
+            if "name" in _dict.keys():
+                _name = _dict["name"]
+            elif "instName" in _dict.keys():
+                _name = f"{_dict['instName']}{_dict['systName']}"
+            for sub_key, sub_val in _dict.items():
+                if (sub_key not in ["name", "instName", "systName"]) and (
+                    type(sub_val) in valid_types
+                ):
+                    all_info.append(f"{key}{_name}{sub_key}{sub_val}")
+                    flattened_dict[f"{key}{_name}{sub_key}"] = sub_val
+                else:
+                    rejected.append(_dict[sub_key])
+        flattened_dict.pop(key)
+    hash = genHexStr(dictToSortedStr(specs))
+    return hash
