@@ -135,14 +135,14 @@ class ImagingProbability:
                     logger.info(
                         f"Calculating probability of detection for {system.star.name}"
                     )
-                    tc_error = False
+                    input_error = False
                     for i, planet_num in enumerate(
                         tqdm(
                             range(1, planets_fitted + 1),
                             position=0,
                         )
                     ):
-                        if tc_error:
+                        if input_error:
                             continue
                         planet_chains = self.split_chains(chains, planet_num)
                         pop = PlanetPopulation(
@@ -152,12 +152,8 @@ class ImagingProbability:
                             self.n_fits,
                             planet_num,
                         )
-                        if pop.tc_error is True:
-                            logger.warning(
-                                f"Skipping {universe.names[system_id]},"
-                                " negative time of conjunction"
-                            )
-                            tc_error = True
+                        if pop.input_error is True:
+                            input_error = True
                             continue
 
                         system_pops.append(pop)
@@ -169,7 +165,7 @@ class ImagingProbability:
                             workers=workers,
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
-                    if tc_error:
+                    if input_error:
                         logger.warning(
                             f"Skipping {universe.names[system_id]},"
                             " negative time of conjunction"
@@ -445,7 +441,9 @@ class PlanetPopulation:
                 planet_vals[ind] += i
         if np.any(np.sign(self.T_c.jd) == -1):
             # Error check
-            self.tc_error = True
+            self.input_error = True
+        elif np.any(self.T.to(u.yr).value > 1e7):
+            self.input_error = True
         else:
             self.closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
             self.W = (
