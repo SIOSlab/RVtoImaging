@@ -135,12 +135,15 @@ class ImagingProbability:
                     logger.info(
                         f"Calculating probability of detection for {system.star.name}"
                     )
+                    tc_error = False
                     for i, planet_num in enumerate(
                         tqdm(
                             range(1, planets_fitted + 1),
                             position=0,
                         )
                     ):
+                        if tc_error:
+                            continue
                         planet_chains = self.split_chains(chains, planet_num)
                         pop = PlanetPopulation(
                             planet_chains,
@@ -154,6 +157,7 @@ class ImagingProbability:
                                 f"Skipping {universe.names[system_id]},"
                                 " negative time of conjunction"
                             )
+                            tc_error = True
                             continue
 
                         system_pops.append(pop)
@@ -165,6 +169,13 @@ class ImagingProbability:
                             workers=workers,
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
+                    if tc_error:
+                        logger.warning(
+                            f"Skipping {universe.names[system_id]},"
+                            " negative time of conjunction"
+                        )
+                        continue
+
                     self.pops[universe.names[system_id]] = system_pops
                     self.mcmc_info[universe.names[system_id]] = chains_spec
                     pdet_xr = xr.DataArray(
