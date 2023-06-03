@@ -152,7 +152,7 @@ class ImagingProbability:
                             self.n_fits,
                             planet_num,
                         )
-                        if pop is None:
+                        if pop.tc_error is True:
                             logger.warning(
                                 f"Skipping {universe.names[system_id]},"
                                 " negative time of conjunction"
@@ -445,12 +445,15 @@ class PlanetPopulation:
                 planet_vals[ind] += i
         if np.any(np.sign(self.T_c.jd) == -1):
             # Error check
-            return None
+            self.tc_error = True
+        else:
+            self.closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
+            self.W = (
+                np.ones(len(self.T)) * p_df.at[self.closest_planet_ind, "W"] * u.deg
+            )
 
-        self.closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
-        self.W = np.ones(len(self.T)) * p_df.at[self.closest_planet_ind, "W"] * u.deg
-
-        self.create_population()
+            self.create_population()
+            self.tc_error = False
 
     def create_population(self):
         secosw = self.secosw
