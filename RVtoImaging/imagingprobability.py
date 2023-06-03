@@ -69,6 +69,7 @@ class ImagingProbability:
 
         self.pops = {}
         self.pdets = {}
+        self.mcmc_info = {}
         # tmp = pd.json_normalize(specs, sep=',')
         # items = []
         self.script_hash = utils.EXOSIMS_script_hash(script_path)
@@ -141,15 +142,21 @@ class ImagingProbability:
                         )
                     ):
                         planet_chains = self.split_chains(chains, planet_num)
-                        system_pops.append(
-                            PlanetPopulation(
-                                planet_chains,
-                                system,
-                                self.method,
-                                self.n_fits,
-                                planet_num,
-                            )
+                        pop = PlanetPopulation(
+                            planet_chains,
+                            system,
+                            self.method,
+                            self.n_fits,
+                            planet_num,
                         )
+                        if pop is None:
+                            logger.warning(
+                                f"Skipping {universe.names[system_id]},"
+                                " negative time of conjunction"
+                            )
+                            continue
+
+                        system_pops.append(pop)
                         system_pops[i].calculate_pdet(
                             self.pdet_times,
                             self.int_times,
@@ -159,6 +166,7 @@ class ImagingProbability:
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
                     self.pops[universe.names[system_id]] = system_pops
+                    self.mcmc_info[universe.names[system_id]] = chains_spec
                     pdet_xr = xr.DataArray(
                         np.stack([pop.pdets for pop in system_pops]),
                         dims=["planet", "int_time", "time"],
@@ -424,6 +432,10 @@ class PlanetPopulation:
             sorted_inds = np.array(diff.sort_values().index)
             for i, ind in enumerate(sorted_inds):
                 planet_vals[ind] += i
+        if np.any(np.sign(self.T_c.jd) == -1):
+            # Error check
+            return None
+
         self.closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
         self.W = np.ones(len(self.T)) * p_df.at[self.closest_planet_ind, "W"] * u.deg
 
