@@ -451,7 +451,7 @@ class PlanetPopulation:
             )
 
             self.create_population()
-            self.tc_error = False
+            self.input_error = False
 
     def create_population(self):
         secosw = self.secosw
