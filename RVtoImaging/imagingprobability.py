@@ -42,10 +42,12 @@ class ImagingProbability:
             universe.systems, universe.SU.sInds, universe.SU.TargetList.Name
         ):
             if name in self.SS.TargetList.Name:
+                if np.any(system.getpattr("inc") < 0):
+                    for planet in system.planets:
+                        planet.inc = np.mod(planet.inc, 180 * u.deg)
                 target_sInd = np.where(self.SS.TargetList.Name == name)[0][0]
                 self.SS = utils.replace_EXOSIMS_system(self.SS, target_sInd, system)
                 self.SS.TargetList.I[target_sInd] = universe.SU.TargetList.I[orig_sInd]
-        self.SS.SimulatedUniverse.gen_physical_properties(**specs)
         self.SS.SimulatedUniverse.init_systems()
 
         # for sInd in

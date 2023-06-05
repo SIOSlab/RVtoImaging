@@ -20,8 +20,9 @@ class ImagingSchedule:
     """
 
     def __init__(self, params, pdet, universe_dir, workers):
-        self.params = params
         params["workers"] = workers
+        params["pdet_hash"] = pdet.script_hash
+        self.params = params
         self.sim_length = params["sim_length"]
         self.window_length = params["window_length"]
         self.block_multiples = params["block_multiples"]
@@ -37,21 +38,35 @@ class ImagingSchedule:
         self.create_schedule(pdet, universe_dir, workers)
         # Add schedule to the SS module
 
-        schedule = self.schedule.sort_values("time")[
-            ["sInd", "time", "int_time"]
-        ].to_numpy()
-        breakpoint()
-        pdet.SS.sim_fixed_schedule(schedule)
+        target_info_path = Path(
+            universe_dir,
+            "results",
+            f"target_schedule_{self.hash}.p".replace(" ", ""),
+        )
+        flat_info_path = Path(
+            universe_dir,
+            "imaging_schedules",
+            f"flat_schedule_{self.hash}.p".replace(" ", ""),
+        )
+        self.targetdf, self.flatdf = pdet.SS.sim_fixed_schedule(self.schedule)
+        with open(target_info_path, "wb") as f:
+            pickle.dump(self.targetdf, f)
+        with open(flat_info_path, "wb") as f:
+            pickle.dump(self.flatdf, f)
 
     def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
             universe_dir,
+            "imaging_schedules",
             f"schedule_{self.hash}.p".replace(" ", ""),
         )
         if schedule_path.exists():
             with open(schedule_path, "rb") as f:
                 final_df = pickle.load(f)
         else:
+            # Make path
+            schedule_path.parent.mkdir(exist_ok=True)
+
             SS = pdet.SS
             start_time = SS.TimeKeeping.missionStart
             start_time_jd = start_time.jd
@@ -913,9 +928,20 @@ class ImagingSchedule:
             total_coeffs = []
             planet_thresholds = {}
             planet_coeffs = {}
+            planet_periods = {}
+            planet_as = {}
             for pnum in range(planet_ub):
                 planet_coeffs[pnum] = []
                 planet_thresholds[pnum] = []
+                planet_periods[pnum] = []
+                planet_as[pnum] = []
+            coeffs_lists = []
+            thresholds_lists = []
+            periods_lists = []
+            as_lists = []  # Semi-major axis
+            pop_lists = []
+            WAs_lists = []
+            dMags_lists = []
             # Create dataframe of the observations
             for star in relevant_stars:
                 star_var_list = self.vars[star]["vars"]
@@ -940,16 +966,48 @@ class ImagingSchedule:
                         final_int_times_d.append(int_times[n_int_block].to(u.d).value)
                         above_threshold = False
                         summed_coeff = 0
+                        coeffs_list = []
+                        thresholds_list = []
+                        periods_list = []
+                        as_list = []
+                        WAs_list = []
+                        dMags_list = []
                         for pnum in range(planet_ub):
                             if pnum in star_planets[star]:
                                 coeff = coeffs[pnum, n_int_block, n_obs]
                                 summed_coeff += coeff
                                 above_threshold = coeff > 100 * self.planet_threshold
+                                period = np.median(
+                                    pdet.pops[star][pnum].T.to(u.yr).value
+                                )
+                                semi_major_axis = np.median(
+                                    pdet.pops[star][pnum].a.to(u.AU).value
+                                )
+                                coeffs_list.append(coeff)
+                                thresholds_list.append(above_threshold)
+                                periods_list.append(period)
+                                as_list.append(semi_major_axis)
+                                WA, dMag = pdet.pops[star][pnum].prop_for_imaging(
+                                    obs_times[n_obs]
+                                )
+                                WAs_list.append(np.median(WA.to(u.arcsec).value))
+                                dMags_list.append(np.median(dMag))
                             else:
                                 coeff = np.nan
                                 above_threshold = np.nan
+                                period = np.nan
+                                semi_major_axis = np.nan
                             planet_coeffs[pnum].append(coeff)
                             planet_thresholds[pnum].append(above_threshold)
+                            planet_periods[pnum].append(period)
+                            planet_as[pnum].append(semi_major_axis)
+                        coeffs_lists.append(coeffs_list)
+                        thresholds_lists.append(thresholds_list)
+                        periods_lists.append(periods_list)
+                        as_lists.append(as_list)
+                        pop_lists.append(pdet.pops[star])
+                        WAs_lists.append(WAs_list)
+                        dMags_lists.append(dMags_list)
 
                         total_coeffs.append(summed_coeff)
 
@@ -961,10 +1019,27 @@ class ImagingSchedule:
             final_df["int_time"] = final_int_times
             final_df["int_time_d"] = final_int_times_d
             final_df["total_coeffs"] = total_coeffs
+            threshold_cols = []
             for pnum in range(planet_ub):
                 final_df[f"coeff{pnum}"] = planet_coeffs[pnum]
             for pnum in range(planet_ub):
-                final_df[f"threshold{pnum}"] = planet_thresholds[pnum]
+                threshold_col = f"threshold{pnum}"
+                threshold_cols.append(threshold_col)
+                final_df[threshold_col] = planet_thresholds[pnum]
+            for pnum in range(planet_ub):
+                final_df[f"expected_period{pnum}"] = planet_periods[pnum]
+            for pnum in range(planet_ub):
+                final_df[f"expected_a{pnum}"] = planet_as[pnum]
+            final_df["expected_detections"] = (
+                final_df.fillna(0)[threshold_cols].astype("int").sum(axis=1)
+            )
+            final_df["all_planet_coeffs"] = coeffs_lists
+            final_df["all_planet_thresholds"] = thresholds_lists
+            final_df["all_planet_periods"] = periods_lists
+            final_df["all_planet_as"] = as_lists
+            final_df["all_planet_pops"] = pop_lists
+            final_df["dMags"] = dMags_lists
+            final_df["WAs"] = WAs_lists
 
             with open(schedule_path, "wb") as f:
                 pickle.dump(final_df, f)
