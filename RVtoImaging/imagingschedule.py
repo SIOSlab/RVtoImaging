@@ -63,7 +63,6 @@ class ImagingSchedule:
             pickle.dump(self.flatdf, f)
         with open(summary_info_path, "wb") as f:
             pickle.dump(self.summary_stats, f)
-        breakpoint()
 
     def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
