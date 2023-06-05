@@ -158,6 +158,7 @@ class ImagingProbability:
                             input_error = True
                             continue
 
+                        pop.chains_spec = chains_spec
                         system_pops.append(pop)
                         system_pops[i].calculate_pdet(
                             self.pdet_times,
@@ -204,6 +205,18 @@ class ImagingProbability:
                         pdet_xr_set = pickle.load(f)
                     with open(pops_path, "rb") as f:
                         self.pops[universe.names[system_id]] = pickle.load(f)
+
+                    system_pops = self.pops[universe.names[system_id]]
+                    if not hasattr(system_pops[0], "chains_spec"):
+                        rvdf = pd.read_csv(Path(system_path.parent, "rv.csv"))
+                        chains_spec["best_precision"] = rvdf.errvel.min()
+
+                        for pop in system_pops:
+                            pop.chains_spec = chains_spec
+                        with open(pops_path, "wb") as f:
+                            pickle.dump(system_pops, f)
+                        utils.update(chains_spec_path.parent, chains_spec)
+                        self.pops[universe.names[system_id]] = system_pops
                     # self.pops[universe.names[system_id]] = system_pops
 
                 # TEMPORARY PLOTTING

@@ -205,6 +205,7 @@ class RVFits:
                 )
 
                 # Run search
+                best_precision = rv_df.errvel.min()
                 n_obs = rv_df.shape[0]
                 obs_baseline = (
                     (
@@ -225,6 +226,7 @@ class RVFits:
                             "mcmc_converged": False,
                             "observations": int(n_obs),
                             "observational_baseline": obs_baseline,
+                            "best_precision": best_precision,
                             "mcmc_success": False,
                             "best_prob": None,
                         }
@@ -238,6 +240,7 @@ class RVFits:
                             "mcmc_converged": bool(searcher.mcmc_converged),
                             "observations": int(n_obs),
                             "observational_baseline": obs_baseline,
+                            "best_precision": best_precision,
                             "mcmc_success": True,
                             "best_prob": searcher.mcmc_best_prob,
                         }
@@ -258,6 +261,7 @@ class RVFits:
                         "mcmc_converged": False,
                         "observations": int(n_obs),
                         "observational_baseline": obs_baseline,
+                        "best_precision": best_precision,
                         "mcmc_success": False,
                         "best_prob": None,
                     }
