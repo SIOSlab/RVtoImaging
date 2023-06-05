@@ -19,9 +19,29 @@ class ImagingSchedule:
     Base class to do probability of detection calculations
     """
 
-    def __init__(self, params, pdet, universe_dir, workers):
+    def __init__(self, params, rv_dataset_params, pdet, universe_dir, workers):
         params["workers"] = workers
         params["pdet_hash"] = pdet.script_hash
+        params["rv_dataset"] = {}
+        for obs_run in rv_dataset_params["rv_observing_runs"]:
+            # This is used to guarantee we're using a hash that a
+            simple_run_spec = {}
+            simple_run_spec["location"] = obs_run["location"]
+            simple_run_spec["start_time"] = obs_run["start_time"].jd
+            simple_run_spec["end_time"] = obs_run["end_time"].jd
+            simple_run_spec["sigma_terms"] = obs_run["sigma_terms"]
+            scheme_spec = {}
+            for scheme_term in obs_run["observation_scheme"].keys():
+                if scheme_term != "astroplan_constraints":
+                    scheme_spec[scheme_term] = obs_run["observation_scheme"][
+                        scheme_term
+                    ]
+            simple_run_spec["observation_scheme"] = scheme_spec
+
+            name = obs_run["name"]
+            params["rv_dataset"][name] = simple_run_spec
+
+        params["rv_dataset_name"] = rv_dataset_params["dataset_name"]
         self.params = params
         self.sim_length = params["sim_length"]
         self.window_length = params["window_length"]
@@ -38,22 +58,14 @@ class ImagingSchedule:
         self.create_schedule(pdet, universe_dir, workers)
         # Add schedule to the SS module
 
-        target_info_path = Path(
-            universe_dir,
-            "results",
-            f"target_schedule_{self.hash}.p".replace(" ", ""),
-        )
-        flat_info_path = Path(
-            universe_dir,
-            "results",
-            f"flat_schedule_{self.hash}.p".replace(" ", ""),
-        )
-        summary_info_path = Path(
-            universe_dir,
-            "results",
-            f"summary_schedule_{self.hash}.p".replace(" ", ""),
-        )
-        flat_info_path.parent.mkdir(exist_ok=True)
+        result_path = Path(universe_dir, "results", f"schedule_{self.hash}")
+        result_path.mkdir(exist_ok=True)
+        with open(Path(result_path, "spec.p"), "wb") as f:
+            pickle.dump(self.params, f)
+        target_info_path = Path(result_path, "per_target.p")
+        flat_info_path = Path(result_path, "flat_info.p")
+        summary_info_path = Path(result_path, "summary.p")
+
         self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
             self.schedule
         )

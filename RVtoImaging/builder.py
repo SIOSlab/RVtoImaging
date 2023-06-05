@@ -293,7 +293,8 @@ class RVtoImaging:
 
         # base_params = rv_dataset_params["base_params"]
         rv_dataset_params["universe_dir"] = self.universe_dir
-        self.rvdataset = RVDataset(rv_dataset_params, self.universe)
+        self.rv_dataset_params = rv_dataset_params
+        self.rvdataset = RVDataset(self.rv_dataset_params, self.universe)
         # for rv_observing_runs in rv_dataset_params["rv_observing_runs"]:
         #     # Create descriptive name for rv_dataset based on the input parameters
         #     rv_observing_run_params = rv_dataset_params.copy()
@@ -370,8 +371,9 @@ class RVtoImaging:
 
     def create_rv_fits(self, rv_fits_params):
         rv_fits_params["universe_dir"] = self.universe_dir
+        self.rv_fits_params = rv_fits_params
         self.orbitfit = RVFits(
-            rv_fits_params, self.universe, self.rvdataset, self.workers
+            self.rv_fits_params, self.universe, self.rvdataset, self.workers
         )
 
     def create_pdet(self, pdet_params):
@@ -404,8 +406,13 @@ class RVtoImaging:
             pdet_params["script"] = original_script
 
     def create_img_schedule(self, img_schedule_params):
+        self.img_schedule_params = img_schedule_params
         self.scheduler = ImagingSchedule(
-            img_schedule_params, self.pdet, self.universe_dir, self.workers
+            img_schedule_params,
+            self.rv_dataset_params,
+            self.pdet,
+            self.universe_dir,
+            self.workers,
         )
 
     def list_parts(self) -> None:
