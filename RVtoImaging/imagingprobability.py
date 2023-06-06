@@ -31,7 +31,6 @@ class ImagingProbability:
 
     def __init__(self, params, orbitfit, universe, workers):
         self.method = params["construction_method"]
-        # self.systems_of_interest = params["systems_of_interest"]
         script_path = Path(params["script"])
         with open(script_path) as f:
             specs = json.loads(f.read())
@@ -139,12 +138,21 @@ class ImagingProbability:
                         f"Calculating probability of detection for {system.star.name}"
                     )
                     input_error = False
-                    for i, planet_num in enumerate(
-                        tqdm(
-                            range(1, planets_fitted + 1),
-                            position=0,
-                        )
-                    ):
+                    # Adding progress bar
+                    global pbar
+                    global counter
+                    counter = Value("i", 0, lock=True)
+                    pbar = TqdmUpTo(
+                        total=len(self.pdet_times) * planets_fitted,
+                        desc="Probability of detection",
+                    )
+                    for i, planet_num in enumerate(range(1, planets_fitted + 1)):
+                        #     tqdm(
+                        #         range(1, planets_fitted + 1),
+                        #         position=0,
+                        #         desc="Fitted planet",
+                        #     )
+                        # ):
                         if input_error:
                             continue
                         planet_chains = self.split_chains(chains, planet_num)
@@ -169,6 +177,7 @@ class ImagingProbability:
                             workers=workers,
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
+                    pbar.close()
                     if input_error:
                         logger.warning(
                             f"Skipping {universe.names[system_id]},"
@@ -257,7 +266,7 @@ class ImagingProbability:
             dMag0s.append(
                 OS.calc_dMag_per_intTime(
                     _int_time, TL, target_sInd, fZ, fEZ, mid_WA, mode
-                )
+                )[0]
             )
         return dMag0s
 
@@ -667,20 +676,26 @@ class PlanetPopulation:
         all_WAs = []
         all_dMags = []
         for chunk in output:
-            all_WAs.append(chunk[0])
+            all_WAs.append(chunk[0].to(u.arcsec).value)
             all_dMags.append(chunk[1])
+        WAarr = np.array(all_WAs)
+        dMagarr = np.array(all_dMags)
 
         # Getting pdet value at each observing time for all integration times
         # Setup for parallelization
-        args = (koT, target_ko, IWA, OWA, all_WAs, all_dMags, int_times, dMag0s)
+        # obs_times_jd = obs_times.jd
+        # int_times_d = int_times.to(u.d).value
+        # koT_jd = koT.jd
+        args = (
+            koT.jd,
+            target_ko,
+            IWA.to(u.arcsec).value,
+            OWA.to(u.arcsec).value,
+            sorted(int_times.to(u.d).value),
+            dMag0s,
+        )
         func = _obj_wrapper(self.pdet_obj, args)
-        func_args = tuple(enumerate(obs_times))
-
-        # Adding progress bar
-        global pbar
-        global counter
-        counter = Value("i", 0, lock=True)
-        pbar = TqdmUpTo(total=len(obs_times), position=1, leave=False)
+        func_args = zip(obs_times.jd, WAarr, dMagarr)
 
         # Do calculations
         with MapWrapper(pool=workers) as mapper:
@@ -695,24 +710,38 @@ class PlanetPopulation:
         WA, dMag = self.prop_for_imaging(obs_time)
         return (WA, dMag)
 
-    def pdet_obj(
-        self, vals, koT, target_ko, IWA, OWA, all_WAs, all_dMags, int_times, dMag0s
-    ):
+    def pdet_obj(self, vals, koT, target_ko, IWA, OWA, int_times, dMag0s):
         counter.value += 1
         pbar.update_to(counter.value)
-        j, obs_time = vals[0], vals[1]
-        WA, dMag = all_WAs[j], all_dMags[j]
+        obs_time, WA, dMag = vals
         pdets = []
+
+        # Mask with obscuration constraint
+        obscuration_mask = (IWA < WA) & (OWA > WA)
+
+        # Not worth comparing if it's always above the best dMag0
+        always_too_dim_mask = dMag > max(dMag0s)
+
+        # This mask gets updated as more planets meet the threshold
+        worth_checking_mask = obscuration_mask & ~always_too_dim_mask
+        worth_checking_inds = np.where(worth_checking_mask == 1)[0]
+        known_visible = 0
+
         for i, int_time in enumerate(int_times):
             final_time = obs_time + int_time
-            relevant_ko = target_ko[(koT.jd <= final_time.jd) & (koT.jd >= obs_time.jd)]
+            relevant_ko = target_ko[(koT <= final_time) & (koT >= obs_time)]
             if np.any(relevant_ko is False):
                 # If any part of the observation would be in keepout,
                 # ignore this observation time
                 pass
             else:
-                visible = (IWA < WA) & (OWA > WA) & (dMag0s[i] > dMag)
-                pdets.append(sum(visible) / self.n_fits)
+                visible_for_int_time = dMag0s[i] > dMag[worth_checking_inds]
+                known_visible += sum(visible_for_int_time)
+                pdets.append(known_visible / self.n_fits)
+
+                # Remove from checking because it will be detectable for a
+                # higher integration time by default
+                worth_checking_inds = worth_checking_inds[~visible_for_int_time]
         return pdets
 
     def lambert_func(self, beta):
