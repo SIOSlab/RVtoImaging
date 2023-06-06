@@ -21,6 +21,7 @@ import radvel.utils as rvu
 import RVtoImaging.plots
 import RVtoImaging.utils as utils
 from EXOSIMS.util.get_module import get_module_from_specs
+from EXOSIMS.util.utils import dictToSortedStr
 from RVtoImaging.logger import logger
 
 
@@ -78,6 +79,8 @@ class ImagingProbability:
         # for col in tmp.columns:
         #     val = tmp[col]
         settings_str = (
+            f"{dictToSortedStr(self.method)}_"
+            f"{self.n_fits}_"
             f"{start_time.jd:.2f}_"
             f"{end_time.jd:.2f}_"
             f"{min_int_time.to(u.d).value:.2f}_"
@@ -638,11 +641,13 @@ class PlanetPopulation:
         r = a * (1 - e**2) / (1 + e * np.cos(nu))
 
         theta = nu + w
+        twoinc = 2 * inc
+        twotheta = 2 * theta
         s = (r / 4) * np.sqrt(
-            4 * np.cos(2 * inc)
-            + 4 * np.cos(2 * theta)
-            - 2 * np.cos(2 * inc - 2 * theta)
-            - 2 * np.cos(2 * inc + 2 * theta)
+            4 * np.cos(twoinc)
+            + 4 * np.cos(twotheta)
+            - 2 * np.cos(twoinc - twotheta)
+            - 2 * np.cos(twoinc + twotheta)
             + 12
         )
         beta = np.arccos(-np.sin(inc) * np.sin(theta))
@@ -650,11 +655,10 @@ class PlanetPopulation:
         # p_phi = self.calc_p_phi(beta, photdict, bandinfo)
         # For terrestrial planets
         phi = self.lambert_func(beta)
-        # p_phi = self.p * phi
-        p_phi = self.p * phi
 
         WA = np.arctan(s / self.dist_to_star).decompose()
-        dMag = -2.5 * np.log10(p_phi * ((self.Rp / r).decompose()) ** 2).value
+        dMag = -2.5 * np.log10(self.p * phi * ((self.Rp / r).decompose()) ** 2).value
+
         return WA, dMag
 
     def calculate_pdet(self, obs_times, int_times, dMag0s, SS, workers=1):
