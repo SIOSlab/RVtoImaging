@@ -5,6 +5,7 @@ from pathlib import Path
 
 import astropy.constants as const
 import astropy.units as u
+import erfa
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -460,13 +461,12 @@ class PlanetPopulation:
         elif np.any(self.T.to(u.yr).value > 1e7):
             self.input_error = True
         else:
+            self.input_error = False
             self.closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
             self.W = (
                 np.ones(len(self.T)) * p_df.at[self.closest_planet_ind, "W"] * u.deg
             )
-
             self.create_population()
-            self.input_error = False
 
     def create_population(self):
         secosw = self.secosw
@@ -538,7 +538,11 @@ class PlanetPopulation:
 
         # set initial epoch to the time of conjunction since that's what M0 is
         self.t0 = Time(T_c, format="jd")
-        self.T_p = rvo.timetrans_to_timeperi(T_c, self.T, e, self.w.value)
+        try:
+            self.T_p = rvo.timetrans_to_timeperi(T_c, self.T, e, self.w.value)
+        except erfa.core.ErfaError:
+            # This occurs for poor fits that get values before the first Julian day
+            self.input_error = True
 
         # Find the semi-amplitude
         self.K = (
