@@ -14,7 +14,6 @@ import pandas as pd
 import xarray as xr
 from astropy.time import Time
 from keplertools import fun as kt
-from scipy._lib._util import MapWrapper
 from tqdm import tqdm
 
 import radvel.orbit as rvo
@@ -676,8 +675,8 @@ class PlanetPopulation:
         koT = SS.koTimes
 
         # Calculating the WA and dMag values of all orbits at all times
-        with MapWrapper(pool=workers) as mapper:
-            output = mapper(self.WA_dMag_obj, obs_times)
+        with Pool(processes=workers) as pool:
+            output = pool.map(self.WA_dMag_obj, obs_times)
         all_WAs = []
         all_dMags = []
         for chunk in output:
@@ -822,16 +821,3 @@ class TqdmUpTo(tqdm):
         if tsize is not None:
             self.total = tsize
         self.update(b * bsize - self.n)  # will also set self.n = b * bsize
-
-
-class _obj_wrapper:
-    """
-    Object to wrap the objective function with it's arguments
-    """
-
-    def __init__(self, f, args):
-        self.f = f
-        self.args = args
-
-    def __call__(self, x):
-        return self.f(np.asarray(x), *self.args)
