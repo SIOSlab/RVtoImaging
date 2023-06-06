@@ -260,10 +260,9 @@ if __name__ == "__main__":
         "script": "scripts/caseA.json",
         "construction_method": {"name": "multivariate gaussian", "cov_samples": 1000},
         "number_of_orbits": 1000,
-        "systems_of_interest": [0],
         "start_time": mission_start,
-        "end_time": mission_start + 10 * u.yr,
-        "min_int_time": 4 * u.hr,
+        "end_time": mission_start + 2 * u.yr,
+        "min_int_time": 1 * u.hr,
         "max_int_time": 10 * u.day,
     }
 
