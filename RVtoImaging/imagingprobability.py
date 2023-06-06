@@ -1,6 +1,7 @@
 import json
 import pickle
-from multiprocessing import Value
+from itertools import repeat
+from multiprocessing import Pool, Value
 from pathlib import Path
 
 import astropy.constants as const
@@ -685,25 +686,19 @@ class PlanetPopulation:
         WAarr = np.array(all_WAs)
         dMagarr = np.array(all_dMags)
 
-        # Getting pdet value at each observing time for all integration times
-        # Setup for parallelization
-        # obs_times_jd = obs_times.jd
-        # int_times_d = int_times.to(u.d).value
-        # koT_jd = koT.jd
-        args = (
-            koT.jd,
-            target_ko,
-            IWA.to(u.arcsec).value,
-            OWA.to(u.arcsec).value,
-            sorted(int_times.to(u.d).value),
-            dMag0s,
+        func_args = zip(
+            obs_times.jd,
+            WAarr,
+            dMagarr,
+            repeat(koT.jd),
+            repeat(target_ko),
+            repeat(IWA.to(u.arcsec).value),
+            repeat(OWA.to(u.arcsec).value),
+            repeat(sorted(int_times.to(u.d).value)),
+            repeat(dMag0s),
         )
-        func = _obj_wrapper(self.pdet_obj, args)
-        func_args = zip(obs_times.jd, WAarr, dMagarr)
-
-        # Do calculations
-        with MapWrapper(pool=workers) as mapper:
-            output = mapper(func, func_args)
+        with Pool(processes=workers) as pool:
+            output = pool.starmap(self.pdet_obj, func_args)
 
         # Turn output list of lists into a dataframe
         output_arr = np.array(output)
@@ -714,11 +709,10 @@ class PlanetPopulation:
         WA, dMag = self.prop_for_imaging(obs_time)
         return (WA, dMag)
 
-    def pdet_obj(self, vals, koT, target_ko, IWA, OWA, int_times, dMag0s):
+    def pdet_obj(self, obs_time, WA, dMag, koT, target_ko, IWA, OWA, int_times, dMag0s):
         counter.value += 1
         pbar.update_to(counter.value)
-        obs_time, WA, dMag = vals
-        pdets = []
+        pdets = np.zeros(len(int_times))
 
         # Mask with obscuration constraint
         obscuration_mask = (IWA < WA) & (OWA > WA)
@@ -731,17 +725,18 @@ class PlanetPopulation:
         worth_checking_inds = np.where(worth_checking_mask == 1)[0]
         known_visible = 0
 
+        after_current_time = koT >= obs_time
         for i, int_time in enumerate(int_times):
-            final_time = obs_time + int_time
-            relevant_ko = target_ko[(koT <= final_time) & (koT >= obs_time)]
+            before_final_time = koT <= (obs_time + int_time)
+            relevant_ko = target_ko[before_final_time & after_current_time]
             if np.any(relevant_ko is False):
                 # If any part of the observation would be in keepout,
                 # ignore this observation time
-                pass
+                break
             else:
                 visible_for_int_time = dMag0s[i] > dMag[worth_checking_inds]
                 known_visible += sum(visible_for_int_time)
-                pdets.append(known_visible / self.n_fits)
+                pdets[i] = known_visible / self.n_fits
 
                 # Remove from checking because it will be detectable for a
                 # higher integration time by default
