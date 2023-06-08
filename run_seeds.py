@@ -259,7 +259,7 @@ if __name__ == "__main__":
     builder.pdet_params = {
         "script": "scripts/caseA.json",
         "construction_method": {"name": "multivariate gaussian", "cov_samples": 1000},
-        "number_of_orbits": 1000,
+        "number_of_orbits": 10000,
         "start_time": mission_start,
         "end_time": mission_start + 2 * u.yr,
         "min_int_time": 1 * u.hr,
@@ -267,15 +267,16 @@ if __name__ == "__main__":
     }
 
     builder.img_schedule_params = {
+        "coeff_multiple": 10,
         "sim_length": 1 * u.yr,
-        "window_length": 8 * u.hr,
-        "block_multiples": [1, 3, 15],
+        "window_length": 2 * u.hr,
+        "block_multiples": [1, 6, 36],
         "max_observations_per_star": 10,
         "planet_threshold": 0.9,
-        "n_observations_above_threshold": 3,
-        "min_time_between_observations": 10 * u.d,
-        "max_time_in_seconds_stage_1": 20 * 60,
-        "max_time_in_seconds_stage_2": 40 * 60,
+        "requested_planet_observations": 3,
+        "min_required_wait_time": 10 * u.d,
+        "max_required_wait_time": 0.25 * u.yr,
+        "max_time_in_seconds": 60 * 60,
         "log_search_progress": True,
     }
     builder.seeds = seeds
