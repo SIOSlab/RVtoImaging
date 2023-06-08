@@ -65,20 +65,20 @@ class ImagingSchedule:
         result_path.mkdir(exist_ok=True)
         with open(Path(result_path, "spec.p"), "wb") as f:
             pickle.dump(self.params, f)
-        target_info_path = Path(result_path, "per_target.p")
-        flat_info_path = Path(result_path, "flat_info.p")
-        summary_info_path = Path(result_path, "summary.p")
 
-        self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
-            self.schedule
-        )
-        breakpoint()
-        with open(target_info_path, "wb") as f:
-            pickle.dump(self.targetdf, f)
-        with open(flat_info_path, "wb") as f:
-            pickle.dump(self.flatdf, f)
-        with open(summary_info_path, "wb") as f:
-            pickle.dump(self.summary_stats, f)
+        # target_info_path = Path(result_path, "per_target.p")
+        # flat_info_path = Path(result_path, "flat_info.p")
+        # summary_info_path = Path(result_path, "summary.p")
+        # self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
+        #     self.schedule
+        # )
+        # breakpoint()
+        # with open(target_info_path, "wb") as f:
+        #     pickle.dump(self.targetdf, f)
+        # with open(flat_info_path, "wb") as f:
+        #     pickle.dump(self.flatdf, f)
+        # with open(summary_info_path, "wb") as f:
+        #     pickle.dump(self.summary_stats, f)
 
     def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
