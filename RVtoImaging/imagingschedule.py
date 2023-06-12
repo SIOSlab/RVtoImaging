@@ -62,7 +62,7 @@ class ImagingSchedule:
         # Add schedule to the SS module
 
         result_path = Path(universe_dir, "results", f"schedule_{self.hash}")
-        result_path.mkdir(exist_ok=True)
+        result_path.mkdir(parents=True, exist_ok=True)
         with open(Path(result_path, "spec.p"), "wb") as f:
             pickle.dump(self.params, f)
 
