@@ -45,7 +45,7 @@ class ImagingSchedule:
         self.params = params
         self.coeff_multiple = params["coeff_multiple"]
         self.sim_length = params["sim_length"]
-        self.window_length = params["window_length"]
+        self.block_length = params["block_length"]
         self.block_multiples = params["block_multiples"]
         self.max_observations_per_star = params["max_observations_per_star"]
         self.planet_threshold = params["planet_threshold"]
@@ -102,7 +102,7 @@ class ImagingSchedule:
                 np.arange(
                     self.start_time_jd,
                     self.end_time_jd,
-                    self.window_length.to(u.d).value,
+                    self.block_length.to(u.d).value,
                 ),
                 format="jd",
                 scale="tai",
@@ -114,9 +114,9 @@ class ImagingSchedule:
             # int_times = pdet.int_times
             # int_times = pdet.int_times[::3]
 
-            self.min_int_time = self.window_length.to(u.d).value
+            self.min_int_time = self.block_length.to(u.d).value
             self.int_times_blocks = sorted(self.block_multiples)
-            self.int_times = np.array(self.block_multiples) * self.window_length.to(u.d)
+            self.int_times = np.array(self.block_multiples) * self.block_length.to(u.d)
             self.int_times_d = self.int_times.to(u.d).value
             self.n_int_times = len(self.int_times)
 
@@ -147,7 +147,7 @@ class ImagingSchedule:
             )[0]
             self.ohtime = SS.Observatory.settlingTime + mode["syst"]["ohTime"]
             self.ohblocks = math.ceil(
-                (self.ohtime / self.window_length).decompose().value
+                (self.ohtime / self.block_length).decompose().value
             )
 
             # Setting up solver
@@ -192,7 +192,7 @@ class ImagingSchedule:
             model, vars = self.create_variables_and_coefficents(model, pdet)
 
             logger.info("Creating optimization constraints")
-            model.AddNoOverlap(vars["all_intervals"])
+            # model.AddNoOverlap(vars["all_intervals"])
             model = self.same_star_observation_wait_constraint(model, vars, pdet)
             model = self.overhead_time_constraint(model, vars)
 
@@ -347,7 +347,7 @@ class ImagingSchedule:
                 if est_planet_period < min_period:
                     min_period = est_planet_period
             quarter_min_period_blocks = math.ceil(
-                (est_planet_period / 4) / self.window_length.to(u.d).value
+                (est_planet_period / 4) / self.block_length.to(u.d).value
             )
             # if est_planet_blocks < blocks_between_star_obs:
             #     blocks_between_star_obs = est_planet_blocks
