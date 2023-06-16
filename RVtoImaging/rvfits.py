@@ -234,24 +234,31 @@ class RVFits:
                     else:
                         # Save specifications of the orbit fit
                         planets_fitted = searcher.post.params.num_planets
+                        if searcher.num_planets > 0:
+                            # Create a system from the fitted planets
+                            best_prob = searcher.mcmc_best_prob
+                            fitted_system = FitSystem(searcher, system)
+                            with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
+                                pickle.dump(fitted_system, f)
+                            mcmc_success = True
+                            mcmc_converged = bool(searcher.mcmc_converged)
+                        else:
+                            best_prob = None
+                            mcmc_success = None
+                            mcmc_converged = None
                         fit_spec = {
                             "max_planets": int(max_planets),
                             "planets_fitted": int(planets_fitted),
-                            "mcmc_converged": bool(searcher.mcmc_converged),
+                            "mcmc_converged": mcmc_converged,
                             "observations": int(n_obs),
                             "observational_baseline": obs_baseline,
                             "best_precision": best_precision,
-                            "mcmc_success": True,
-                            "best_prob": searcher.mcmc_best_prob,
+                            "mcmc_success": mcmc_success,
+                            "best_prob": best_prob,
                         }
                         logger.info(
                             f"Found {planets_fitted} planets around {star_name}."
                         )
-                        if searcher.num_planets > 0:
-                            # Create a system from the fitted planets
-                            fitted_system = FitSystem(searcher, system)
-                            with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
-                                pickle.dump(fitted_system, f)
 
                 except BaseException:
                     logger.warning(f"failure in RVSearch on {star_name}")
