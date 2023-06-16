@@ -207,7 +207,7 @@ class RVtoImaging:
                 tmp_file = Path(
                     self.cache_dir,
                     (
-                        f"{universe_params['script'].split('.')[0]}"
+                        f"{universe_params['script'].split('.')[0].replace('/', '_')}"
                         f"_seed_{exosims_script['seed']}.json"
                     ),
                 )
