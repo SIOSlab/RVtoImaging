@@ -318,7 +318,7 @@ class ImagingProbability:
         hash = utils.EXOSIMS_script_hash(None, specs=specs)
 
         interps_path = Path(
-            system_path.parts[0],
+            system_path.parents[3],
             "dMag_interps",
             hash,
             f"{system.star.name.replace(' ', '_')}_{genHexStr(str(fZs))}.p",
