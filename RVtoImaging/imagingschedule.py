@@ -1,9 +1,12 @@
 import itertools
+import json
 import math
 import pickle
 from pathlib import Path
 
 import astropy.units as u
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from astropy.time import Time
@@ -21,7 +24,7 @@ class ImagingSchedule:
 
     def __init__(self, params, rv_dataset_params, pdet, universe_dir, workers):
         params["workers"] = workers
-        params["pdet_hash"] = pdet.script_hash
+        params["pdet_hash"] = pdet.settings_hash
         params["rv_dataset"] = {}
         for obs_run in rv_dataset_params["rv_observing_runs"]:
             # This is used to guarantee we're using a hash that a
@@ -49,36 +52,48 @@ class ImagingSchedule:
         self.block_multiples = params["block_multiples"]
         self.max_observations_per_star = params["max_observations_per_star"]
         self.planet_threshold = params["planet_threshold"]
-        # self.stage_2_threshold = params["stage_2_threshold"]
         self.requested_planet_observations = params["requested_planet_observations"]
-        # self.stage_2_planet_observations = params["stage_2_planet_observations"]
         self.min_required_wait_time = params["min_required_wait_time"]
         self.max_required_wait_time = params["max_required_wait_time"]
         self.log_search_progress = params["log_search_progress"]
         self.max_time_in_seconds = params["max_time_in_seconds"]
         self.hash = genHexStr(dictToSortedStr(params))
-        logger.info("Creating Imaging Schedule")
+
+        self.result_path = Path(universe_dir, "results", f"schedule_{self.hash}")
+        self.result_path.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            f"Creating Imaging Schedule {self.hash}"
+            f" for {universe_dir.parts[-1].replace('_', ' ')} "
+        )
         self.create_schedule(pdet, universe_dir, workers)
         # Add schedule to the SS module
 
-        result_path = Path(universe_dir, "results", f"schedule_{self.hash}")
-        result_path.mkdir(parents=True, exist_ok=True)
-        with open(Path(result_path, "spec.p"), "wb") as f:
+        with open(Path(self.result_path, "spec.p"), "wb") as f:
             pickle.dump(self.params, f)
 
-        # target_info_path = Path(result_path, "per_target.p")
-        # flat_info_path = Path(result_path, "flat_info.p")
-        # summary_info_path = Path(result_path, "summary.p")
-        # self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
-        #     self.schedule
-        # )
-        # breakpoint()
-        # with open(target_info_path, "wb") as f:
-        #     pickle.dump(self.targetdf, f)
-        # with open(flat_info_path, "wb") as f:
-        #     pickle.dump(self.flatdf, f)
-        # with open(summary_info_path, "wb") as f:
-        #     pickle.dump(self.summary_stats, f)
+        target_info_path = Path(self.result_path, "per_target.p")
+        flat_info_path = Path(self.result_path, "flat_info.p")
+        summary_info_path = Path(self.result_path, "summary.p")
+        if not target_info_path.exists():
+            self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
+                self.schedule
+            )
+            with open(target_info_path, "wb") as f:
+                pickle.dump(self.targetdf, f)
+            with open(flat_info_path, "wb") as f:
+                pickle.dump(self.flatdf, f)
+            with open(summary_info_path, "wb") as f:
+                pickle.dump(self.summary_stats, f)
+        else:
+            with open(target_info_path, "rb") as f:
+                self.targetdf = pickle.load(f)
+            with open(flat_info_path, "rb") as f:
+                self.flatdf = pickle.load(f)
+            with open(summary_info_path, "rb") as f:
+                self.summary_stats = pickle.load(f)
+
+        self.schedule_plots(pdet)
 
     def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
@@ -111,8 +126,6 @@ class ImagingSchedule:
             self.obs_times_jd = self.obs_times.jd
             self.n_obs_times = len(self.obs_times)
             self.block_inds = np.arange(0, self.n_obs_times, 1)
-            # int_times = pdet.int_times
-            # int_times = pdet.int_times[::3]
 
             self.min_int_time = self.block_length.to(u.d).value
             self.int_times_blocks = sorted(self.block_multiples)
@@ -499,6 +512,7 @@ class ImagingSchedule:
         # Maximize the number of observations above the threshold, with a cap
         # of benefit set by the requested_planet_observations parameter
         all_planet_requested_observations = []
+        amounts_above_threshold_terms = []
         for star in tqdm(self.relevant_stars, desc="Adding threshold constraint"):
             n_intervals = min(
                 self.max_observations_per_star,
@@ -519,6 +533,10 @@ class ImagingSchedule:
                         planet
                     ]:
                         if coeff >= self.coeff_multiple * self.planet_threshold:
+                            amounts_above_threshold_terms.append(
+                                _bool
+                                * (coeff - self.coeff_multiple * self.planet_threshold)
+                            )
                             above_threshold_val.append(_bool)
 
                 # Defining the above_requested_observations boolean
@@ -544,6 +562,7 @@ class ImagingSchedule:
                 * max(self.block_multiples)
                 * all_planet_requested_observations
             )
+            + sum(amounts_above_threshold_terms)
             - sum(vars["size_vars"])
             - sum(vars["active_bools"])
         )
@@ -670,3 +689,102 @@ class ImagingSchedule:
         final_df["dMags"] = dMags_lists
         final_df["WAs"] = WAs_lists
         return final_df
+
+    def schedule_plots(self, pdet):
+        SS = pdet.SS
+        SU = SS.SimulatedUniverse
+        start_time_jd = SS.TimeKeeping.missionStart.jd
+        end_time_jd = start_time_jd + self.sim_length.to(u.d).value
+        dt = self.block_length.to(u.d).value
+        obs_times = Time(
+            np.arange(start_time_jd, end_time_jd, dt),
+            format="jd",
+            scale="tai",
+        )
+
+        det_colors = {0: "red", 1: "green", -1: "yellow", -2: "yellow"}
+        n_inds = 50
+        for system_name in tqdm(pdet.pops.keys(), desc="Generating plots"):
+            if system_name not in self.schedule.star.values:
+                continue
+            pops = pdet.pops[system_name]
+            with open(
+                Path(pdet.system_paths[system_name].parent, "obs_spec.json"), "r"
+            ) as f:
+                obs_spec = json.load(f)
+            best_precision = np.inf
+            for _, obs_run in obs_spec["obs_runs"].items():
+                if obs_run["sigma_rv"] < best_precision:
+                    best_precision = obs_run["sigma_rv"]
+            for pop in pops:
+                fig, (ax_WA, ax_dMag) = plt.subplots(figsize=(10, 5), ncols=2)
+                sInd = np.where(SS.TargetList.Name == system_name)[0][0]
+                pInds = np.where(SU.plan2star == sInd)[0]
+                pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
+                if pInd not in self.targetdf.columns:
+                    continue
+                fig_path = Path(f"{self.result_path}/{pInd}.png")
+                if fig_path.exists():
+                    continue
+                eWAs = []
+                edMags = []
+                pdMags = np.zeros((len(obs_times), n_inds))
+                pWAs = np.zeros((len(obs_times), n_inds))
+                for i, obs_time in enumerate(obs_times):
+                    SU.propag_system(sInd, dt * u.d)
+                    edMags.append(SU.dMag[pInd])
+                    eWAs.append(SU.WA[pInd].to(u.arcsec).value)
+                    pWA, pdMag = pop.prop_for_imaging(obs_time)
+                    pdMags[i] = pdMag[:n_inds]
+                    pWAs[i] = pWA[:n_inds].to(u.arcsec).value
+                cmap = plt.get_cmap("viridis")
+                colors = cmap(np.linspace(0, 1, n_inds))
+                for j in range(n_inds):
+                    ax_dMag.plot(
+                        obs_times.jd - obs_times[0].jd,
+                        pdMags[:, j],
+                        color=colors[j],
+                        label=f"{j}",
+                        alpha=0.25,
+                    )
+                    ax_WA.plot(
+                        obs_times.jd - obs_times[0].jd,
+                        pWAs[:, j],
+                        color=colors[j],
+                        label=f"{j}",
+                        alpha=0.25,
+                    )
+                ax_dMag.plot(obs_times.jd - obs_times[0].jd, edMags, color="k")
+                ax_WA.plot(obs_times.jd - obs_times[0].jd, eWAs, color="k")
+
+                dMagLims = ax_dMag.get_ylim()
+                dMagheight = dMagLims[1] - dMagLims[0]
+                WALims = ax_WA.get_ylim()
+                WAheight = WALims[1] - WALims[0]
+                for nobs, _t in enumerate(self.targetdf[pInd].obs_time):
+                    _det_status = self.targetdf[pInd].det_status[nobs]
+                    _tint = self.targetdf[pInd].int_time[nobs].to(u.d).value
+                    zeroed_time = _t.jd - obs_times[0].jd
+                    dMag_sq = mpl.patches.Rectangle(
+                        (zeroed_time, dMagLims[0]),
+                        width=_tint,
+                        height=dMagheight,
+                        zorder=0,
+                        color=det_colors[_det_status],
+                    )
+                    ax_dMag.add_patch(dMag_sq)
+                    WA_sq = mpl.patches.Rectangle(
+                        (zeroed_time, WALims[0]),
+                        width=_tint,
+                        height=WAheight,
+                        zorder=0,
+                        color=det_colors[_det_status],
+                    )
+                    ax_WA.add_patch(WA_sq)
+
+                ax_dMag.set_ylabel(r"$\Delta$mag")
+                ax_WA.set_ylabel('Planet-star angular separation (")')
+                ax_WA.set_xlabel("Time since mission start (d)")
+                ax_dMag.set_xlabel("Time since mission start (d)")
+                fig.suptitle(f"{system_name} - RV precision: {best_precision} m/s")
+                fig.savefig(f"{self.result_path}/{pInd}.png", dpi=300)

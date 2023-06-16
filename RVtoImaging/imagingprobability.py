@@ -14,6 +14,7 @@ import pandas as pd
 import xarray as xr
 from astropy.time import Time
 from keplertools import fun as kt
+from scipy.interpolate import interp1d, interp2d
 from tqdm import tqdm
 
 import radvel.orbit as rvo
@@ -21,7 +22,8 @@ import radvel.utils as rvu
 import RVtoImaging.plots
 import RVtoImaging.utils as utils
 from EXOSIMS.util.get_module import get_module_from_specs
-from EXOSIMS.util.utils import dictToSortedStr
+from EXOSIMS.util.phaseFunctions import realSolarSystemPhaseFunc
+from EXOSIMS.util.utils import dictToSortedStr, genHexStr
 from RVtoImaging.logger import logger
 
 
@@ -32,24 +34,34 @@ class ImagingProbability:
 
     def __init__(self, params, orbitfit, universe, workers):
         self.method = params["construction_method"]
-        script_path = Path(params["script"])
-        with open(script_path) as f:
+        self.script_path = Path(params["script"])
+        with open(self.script_path) as f:
             specs = json.loads(f.read())
         self.SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
+        if not np.all(self.SS.SimulatedUniverse.a == universe.SU.a):
+            SU = self.SS.SimulatedUniverse
+            circular = SU.e == 0
+            SU.w[circular] = 0
 
-        # Replace the initialized SS module's planets with all the ones
-        # from the universe
-        for system, orig_sInd, name in zip(
-            universe.systems, universe.SU.sInds, universe.SU.TargetList.Name
-        ):
-            if name in self.SS.TargetList.Name:
-                if np.any(system.getpattr("inc") < 0):
-                    for planet in system.planets:
-                        planet.inc = np.mod(planet.inc, 180 * u.deg)
-                target_sInd = np.where(self.SS.TargetList.Name == name)[0][0]
-                self.SS = utils.replace_EXOSIMS_system(self.SS, target_sInd, system)
-                self.SS.TargetList.I[target_sInd] = universe.SU.TargetList.I[orig_sInd]
-        self.SS.SimulatedUniverse.init_systems()
+            # Replace the initialized SS module's planets with all the ones
+            # from the universe
+            for system, orig_sInd, name in zip(
+                universe.systems, universe.SU.sInds, universe.SU.TargetList.Name
+            ):
+                if name in self.SS.TargetList.Name:
+                    if np.any(system.getpattr("inc") < 0):
+                        for planet in system.planets:
+                            planet.inc = np.mod(planet.inc, 180 * u.deg)
+                    target_sInd = np.where(self.SS.TargetList.Name == name)[0][0]
+                    self.SS = utils.replace_EXOSIMS_system(self.SS, target_sInd, system)
+                    self.SS.TargetList.I[target_sInd] = universe.SU.TargetList.I[
+                        orig_sInd
+                    ]
+            SU = self.SS.SimulatedUniverse
+            SU.nPlans = len(SU.plan2star)
+            if SU.earthPF:
+                SU.phiIndex = np.ones(SU.nPlans, dtype=int) * 2
+            self.SS.SimulatedUniverse.init_systems()
 
         # for sInd in
         # utils.replace_EXOSIMS_system(self.SS, sInd, )
@@ -64,6 +76,7 @@ class ImagingProbability:
 
         # max_int_time = self.SS.TargetList.OpticalSystem.intCutoff
         self.int_times = self.gen_int_times(min_int_time, max_int_time)
+        self.WAs = self.gen_WAs()
 
         self.pdet_times = Time(
             np.arange(start_time.jd, end_time.jd, min_int_time.to(u.d).value),
@@ -75,11 +88,11 @@ class ImagingProbability:
         self.mcmc_info = {}
         # tmp = pd.json_normalize(specs, sep=',')
         # items = []
-        self.script_hash = utils.EXOSIMS_script_hash(script_path)
+        self.script_hash = utils.EXOSIMS_script_hash(self.script_path)
         # for col in tmp.columns:
         #     val = tmp[col]
         settings_str = (
-            f"{dictToSortedStr(self.method)}_"
+            f"{genHexStr(dictToSortedStr(self.method))}_"
             f"{self.n_fits}_"
             f"{start_time.jd:.2f}_"
             f"{end_time.jd:.2f}_"
@@ -87,6 +100,11 @@ class ImagingProbability:
             f"{max_int_time.to(u.d).value:.2f}_"
             f"{self.script_hash}"
         )
+        self.settings_hash = genHexStr(settings_str)
+        self.system_paths = {
+            universe.systems[system].star.name: path
+            for system, path in zip(orbitfit.systems_to_fit, orbitfit.paths)
+        }
 
         # Loop through all the systems we want to calculate probability of
         # detection for
@@ -105,8 +123,8 @@ class ImagingProbability:
             chains_path = Path(system_path, "chains.csv.tar.bz2")
             search_path = Path(system_path, "search.pkl")
             # pdet_path = Path(system_path, "pdet.nc")
-            pdet_path = Path(system_path, f"pdet_{settings_str}.p")
-            pops_path = Path(system_path, f"pops_{settings_str}.p")
+            pdet_path = Path(system_path, f"pdet_{self.settings_hash}.p")
+            pops_path = Path(system_path, f"pops_{self.settings_hash}.p")
             if chains_spec_path.exists():
                 with open(chains_spec_path, "r") as f:
                     chains_spec = json.loads(f.read())
@@ -118,6 +136,7 @@ class ImagingProbability:
 
             if chains_path.exists():
                 if not pdet_path.exists():
+                    # if pdet_path.exists():
                     logger.info(
                         (
                             "Loading chains and search data for "
@@ -131,7 +150,10 @@ class ImagingProbability:
                     system = universe.systems[system_id]
                     system_pops = []
                     # Create the integration times and dMag0s
-                    dMag0s = self.gen_dMag0s(self.SS, system, self.int_times)
+                    # dMag0s = self.gen_dMag0s(self.SS, system, self.int_times)
+                    dim_dMag_interps = self.gen_dim_dMag_interps(
+                        self.SS, system, self.int_times, self.WAs, system_path
+                    )
                     system_pdets = pd.DataFrame(
                         np.zeros((len(self.int_times), len(self.pdet_times))),
                         columns=self.pdet_times,
@@ -175,7 +197,7 @@ class ImagingProbability:
                         system_pops[i].calculate_pdet(
                             self.pdet_times,
                             self.int_times,
-                            dMag0s,
+                            dim_dMag_interps,
                             self.SS,
                             workers=workers,
                         )
@@ -273,6 +295,93 @@ class ImagingProbability:
             )
         return dMag0s
 
+    def gen_dim_dMag_interps(self, SS, system, int_times, WAs, system_path):
+        TL = SS.TargetList
+        OS = TL.OpticalSystem
+        ZL = TL.ZodiacalLight
+        fZ = ZL.fZ0
+        fEZ = ZL.fEZ0
+
+        mode = list(
+            filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+        )[0]
+        target_sInd = np.where(TL.Name == system.star.name.replace("_", " "))[0]
+        fZvals = ZL.fZMap[mode["systName"]][target_sInd][0]
+        max_fZ = max(fZvals)
+        min_fZ = min(fZvals)
+        fZs = np.logspace(0, np.log10(max_fZ / min_fZ), 10) * min_fZ
+
+        with open(self.script_path, "r") as f:
+            specs = json.load(f)
+        if "seed" in specs.keys():
+            specs.pop("seed")
+        hash = utils.EXOSIMS_script_hash(None, specs=specs)
+
+        interps_path = Path(
+            system_path.parts[0],
+            "dMag_interps",
+            hash,
+            f"{system.star.name.replace(' ', '_')}_{genHexStr(str(fZs))}.p",
+        )
+        interps_path.parent.mkdir(parents=True, exist_ok=True)
+        if interps_path.exists():
+            logger.info(f"Loading dimmest dMag interpolants from {interps_path}")
+            with open(interps_path, "rb") as f:
+                dim_dMag_interps = pickle.load(f)
+        else:
+            logger.info(f"Creating dimmest dMag interpolants for {system.star.name}")
+            fEZ = np.array(fEZ.to(1 / u.arcsec**2).value, ndmin=1) * (
+                1 / u.arcsec**2
+            )
+
+            dim_dMag_arr = np.zeros([len(int_times), len(WAs), len(fZs)])
+
+            fZ_pbar = TqdmUpTo(
+                total=len(int_times) * len(WAs) * len(fZs),
+                desc=(
+                    f"dMag curves, "
+                    f"int times:{len(int_times)}, "
+                    f"WAs:{len(WAs)}, "
+                    f"fZs:{len(fZs)}"
+                ),
+            )
+            counter = 0
+
+            # Formatting for calc_dMag_per_intTime
+            _int_times = [
+                np.array(int_time.to(u.d).value, ndmin=1) * u.d
+                for int_time in int_times
+            ]
+            _WAs = [np.array(WA.to(u.arcsec).value, ndmin=1) * u.arcsec for WA in WAs]
+            _fZs = [np.array(fZ, ndmin=1) * (1 / u.arcsec**2) for fZ in fZs]
+            for i, _int_time in enumerate(_int_times):
+                for j, _WA in enumerate(_WAs):
+                    for k, _fZ in enumerate(_fZs):
+                        dim_dMag_arr[i, j, k] = OS.calc_dMag_per_intTime(
+                            _int_time,
+                            TL,
+                            target_sInd,
+                            _fZ,
+                            fEZ,
+                            _WA,
+                            mode,
+                        )[0]
+                        counter += 1
+                        fZ_pbar.update_to(counter)
+
+            dim_dMag_interps = {}
+            for i, fZ in enumerate(fZs):
+                dim_dMag_interps[fZ] = interp2d(
+                    WAs.to(u.arcsec).value,
+                    int_times.to(u.d).value,
+                    dim_dMag_arr[:, :, i],
+                    fill_value=np.nan,
+                )
+            with open(interps_path, "wb") as f:
+                pickle.dump(dim_dMag_interps, f)
+            logger.info(f"Dimmest dMag interpolants saved to {interps_path}")
+        return dim_dMag_interps
+
     def gen_int_times(self, min_time, max_time):
         # TL = SS.TargetList
         # OS = TL.OpticalSystem
@@ -298,6 +407,13 @@ class ImagingProbability:
         #     * min_time
         # ).to(u.d)
         return int_times
+
+    def gen_WAs(self):
+        OS = self.SS.TargetList.OpticalSystem
+        IWA = OS.IWA
+        OWA = OS.OWA
+        WAs = np.logspace(0, np.log10(OWA / IWA).value, 10) * IWA
+        return WAs
 
     def split_chains(self, chains, nplan):
         cols_to_rename = ["secosw", "sesinw", "e", "per", "tc", "k"]
@@ -454,6 +570,7 @@ class PlanetPopulation:
 
         self.dist_to_star = system.star.dist
         self.Ms = system.star.mass
+        self.star = system.star
         # self.id = system.star.id
         self.name = system.star.name.replace("_", " ")
 
@@ -492,7 +609,26 @@ class PlanetPopulation:
         else:
             if (e > 1) or (e == 0):
                 e = 0.0001
-        self.e = e
+        self.circular_mask = e < 0.01
+        if np.mean(self.circular_mask) > 0.5:
+            logger.info("Assuming planet is on a circular orbit")
+            self.circular = True
+            self.e = np.zeros(self.n_fits)
+            self.w_s = np.zeros(self.n_fits) * u.rad
+            self.w = np.zeros(self.n_fits) * u.rad
+            self.M0 = np.pi / 2 * u.rad
+        else:
+            self.circular = False
+            self.e = e
+            # Finding the planet's arguement of periapsis, RadVel report's the
+            # star's value
+            self.w_s = np.arctan2(sesinw, secosw) * u.rad
+            self.w = (self.w_s + np.pi * u.rad) % (2 * np.pi * u.rad)
+            # Finding the mean anomaly at time of conjunction
+            nu_p = (3 * np.pi / 2 * u.rad - self.w_s) % (2 * np.pi * u.rad)
+            E_p = 2 * np.arctan2(np.sqrt((1 - e)) * np.tan(nu_p / 2), np.sqrt((1 + e)))
+            self.M0 = (E_p - e * np.sin(E_p) * u.rad) % (2 * np.pi * u.rad)
+
         # Mass of planet and inclination
         self.Msini = rvu.Msini(K, T, np.ones(T.size) * self.Ms, e, Msini_units="earth")
         if self.fixed_inc is None:
@@ -531,24 +667,20 @@ class PlanetPopulation:
 
         # Set geometric albedo
         # if self.fixed_p is not None:
-        self.p = self.fixed_p
+        # self.p = self.fixed_p
 
         # Now with inclination, planet mass, and longitude of the ascending node
         # we can calculate the remaining parameters
         self.mu = (const.G * (self.Mp + self.Ms)).decompose()
         self.a = ((self.mu * (T / (2 * np.pi)) ** 2) ** (1 / 3)).decompose()
 
-        # Finding the planet's arguement of periapsis, RadVel report's the
-        # star's value
-        self.w_s = np.arctan2(sesinw, secosw) * u.rad
-        self.w = (self.w_s + np.pi * u.rad) % (2 * np.pi * u.rad)
-
-        # Finding the mean anomaly at time of conjunction
-        nu_p = (np.pi / 2 * u.rad - self.w_s) % (2 * np.pi * u.rad)
-        E_p = 2 * np.arctan2(np.sqrt((1 - e)) * np.tan(nu_p / 2), np.sqrt((1 + e)))
-        self.M0 = (E_p - e * np.sin(E_p) * u.rad) % (2 * np.pi * u.rad)
+        # Classify the planets, assigns p
+        self.classify_planets()
 
         # set initial epoch to the time of conjunction since that's what M0 is
+        # if self.circular:
+        #     self.t0 = Time(T_c, format="jd") - 3 * self.T / 4
+        # else:
         self.t0 = Time(T_c, format="jd")
         try:
             self.T_p = rvo.timetrans_to_timeperi(T_c, self.T, e, self.w.value)
@@ -574,7 +706,6 @@ class PlanetPopulation:
             )
         else:
             self.f_sed = np.ones(self.n_fits) * self.fixed_f_sed
-        pass
 
     def setup_mg(self, chains, nplan):
         self.droppable_cols = ["lnprobability"]
@@ -635,36 +766,45 @@ class PlanetPopulation:
     def prop_for_imaging(self, t):
         # Calculates the working angle and deltaMag
         a, e, inc, w = self.a, self.e, self.inc, self.w
-        M = utils.mean_anom(self, t)
-        E = kt.eccanom(M.value, self.e)
-        nu = kt.trueanom(E, e) * u.rad
-        r = a * (1 - e**2) / (1 + e * np.cos(nu))
+        if self.circular:
+            theta = utils.mean_anom(self, t)
+            # theta = (math.tau * (phase - np.floor(phase))) * u.rad
+            r = a
+        else:
+            M = utils.mean_anom(self, t)
+            E = kt.eccanom(M.value, e)
+            nu = kt.trueanom(E, e) * u.rad
+            theta = nu + w
+            r = a * (1 - e**2) / (1 + e * np.cos(nu))
 
-        theta = nu + w
-        twoinc = 2 * inc
-        twotheta = 2 * theta
-        s = (r / 4) * np.sqrt(
-            4 * np.cos(twoinc)
-            + 4 * np.cos(twotheta)
-            - 2 * np.cos(twoinc - twotheta)
-            - 2 * np.cos(twoinc + twotheta)
-            + 12
-        )
+        s = r * np.sqrt(1 - np.sin(inc) ** 2 * np.sin(theta) ** 2)
+        # twoinc = 2 * inc
+        # twotheta = 2 * theta
+        # s = (r / 4) * np.sqrt(
+        #     4 * np.cos(twoinc)
+        #     + 4 * np.cos(twotheta)
+        #     - 2 * np.cos(twoinc - twotheta)
+        #     - 2 * np.cos(twoinc + twotheta)
+        #     + 12
+        # )
         beta = np.arccos(-np.sin(inc) * np.sin(theta))
         # For gas giants
         # p_phi = self.calc_p_phi(beta, photdict, bandinfo)
         # For terrestrial planets
-        phi = self.lambert_func(beta)
+        # phi = self.lambert_func(beta)
+        phi = realSolarSystemPhaseFunc(beta, self.phiIndex)
 
         WA = np.arctan(s / self.dist_to_star).decompose()
         dMag = -2.5 * np.log10(self.p * phi * ((self.Rp / r).decompose()) ** 2).value
 
         return WA, dMag
 
-    def calculate_pdet(self, obs_times, int_times, dMag0s, SS, workers=1):
+    def calculate_pdet(self, obs_times, int_times, dim_dMag_interps, SS, workers=1):
         # Unpacking necessary values
         TL = SS.TargetList
         OS = TL.OpticalSystem
+        ZL = SS.ZodiacalLight
+        # Obs = SS.Observatory
         IWA = OS.IWA
         OWA = OS.OWA
         mode = list(
@@ -675,6 +815,8 @@ class PlanetPopulation:
         koT = SS.koTimes
 
         # Calculating the WA and dMag values of all orbits at all times
+        self.WA_dMag_obj(obs_times[0])
+        # breakpoint()
         with Pool(processes=workers) as pool:
             output = pool.map(self.WA_dMag_obj, obs_times)
         all_WAs = []
@@ -685,16 +827,31 @@ class PlanetPopulation:
         WAarr = np.array(all_WAs)
         dMagarr = np.array(all_dMags)
 
+        # fZs = np.zeros(len(obs_times))
+        # fZs = ZL.fZMap[mode['systName']][target_sInd][0]
+        fZ_interp = interp1d(koT.jd, ZL.fZMap[mode["systName"]][target_sInd])
+        fZs = fZ_interp(obs_times.jd)
+        fZ_interp_keys = np.array([x for x in dim_dMag_interps.keys()])
+        fZ_time_keys = np.zeros(len(fZs))
+        for i, fZ in enumerate(fZs):
+            greater_fZs = fZ_interp_keys[fZ_interp_keys > fZ]
+            if len(greater_fZs) == 0:
+                fZ_time_keys[i] = fZ_interp_keys[-1]
+            else:
+                fZ_time_keys[i] = min(greater_fZs)
+
+        fZs = fZs * (1 / u.arcsec**2)
         func_args = zip(
             obs_times.jd,
             WAarr,
             dMagarr,
+            fZ_time_keys,
             repeat(koT.jd),
             repeat(target_ko),
             repeat(IWA.to(u.arcsec).value),
             repeat(OWA.to(u.arcsec).value),
             repeat(sorted(int_times.to(u.d).value)),
-            repeat(dMag0s),
+            repeat(dim_dMag_interps),
         )
         with Pool(processes=workers) as pool:
             output = pool.starmap(self.pdet_obj, func_args)
@@ -708,7 +865,19 @@ class PlanetPopulation:
         WA, dMag = self.prop_for_imaging(obs_time)
         return (WA, dMag)
 
-    def pdet_obj(self, obs_time, WA, dMag, koT, target_ko, IWA, OWA, int_times, dMag0s):
+    def pdet_obj(
+        self,
+        obs_time,
+        WA,
+        dMag,
+        fZ_key,
+        koT,
+        target_ko,
+        IWA,
+        OWA,
+        int_times,
+        dim_dMag_interps,
+    ):
         counter.value += 1
         pbar.update_to(counter.value)
         pdets = np.zeros(len(int_times))
@@ -716,16 +885,15 @@ class PlanetPopulation:
         # Mask with obscuration constraint
         obscuration_mask = (IWA < WA) & (OWA > WA)
 
-        # Not worth comparing if it's always above the best dMag0
-        always_too_dim_mask = dMag > max(dMag0s)
-
         # This mask gets updated as more planets meet the threshold
-        worth_checking_mask = obscuration_mask & ~always_too_dim_mask
+        worth_checking_mask = obscuration_mask
         worth_checking_inds = np.where(worth_checking_mask == 1)[0]
         known_visible = 0
 
         after_current_time = koT >= obs_time
         for i, int_time in enumerate(int_times):
+            # Signal = np.zeros(len(dMag))
+            # Noise = np.zeros(len(dMag))
             before_final_time = koT <= (obs_time + int_time)
             relevant_ko = target_ko[before_final_time & after_current_time]
             if np.any(relevant_ko is False):
@@ -733,13 +901,17 @@ class PlanetPopulation:
                 # ignore this observation time
                 break
             else:
-                visible_for_int_time = dMag0s[i] > dMag[worth_checking_inds]
-                known_visible += sum(visible_for_int_time)
+                if len(worth_checking_inds) > 0:
+
+                    visible_for_int_time = (
+                        dim_dMag_interps[fZ_key](WA[worth_checking_inds], int_time)
+                    ) > dMag[worth_checking_inds]
+                    known_visible += sum(visible_for_int_time)
+                    worth_checking_inds = worth_checking_inds[~visible_for_int_time]
                 pdets[i] = known_visible / self.n_fits
 
                 # Remove from checking because it will be detectable for a
                 # higher integration time by default
-                worth_checking_inds = worth_checking_inds[~visible_for_int_time]
         return pdets
 
     def lambert_func(self, beta):
@@ -804,6 +976,91 @@ class PlanetPopulation:
             R[inds == j] = 10.0 ** (C[j - 1] + np.log10(m[inds == j]) * S[j - 1])
 
         return R * u.R_earth
+
+    def classify_planets(self):
+        """
+        This determines the Kopparapu bin of the planet This is adapted from
+        the EXOSIMS SubtypeCompleteness method classifyPlanets so that EXOSIMS
+        isn't a mandatory import
+        """
+        # Calculate the luminosity of the star, assuming main-sequence
+        if self.star.mass < 2 * u.M_sun:
+            self.Ls = const.L_sun * (self.star.mass / const.M_sun) ** 4
+        else:
+            self.Ls = 1.4 * const.L_sun * (self.star.mass / const.M_sun) ** 3.5
+
+        a_AU = self.a.to(u.AU).value
+        Rp_earth = self.Rp.to("earthRad").value
+        self.phiIndex = np.zeros(len(a_AU))
+        self.p = np.zeros(len(a_AU))
+        for i, a, e, Rp in zip(range(len(a_AU)), a_AU, self.e, Rp_earth):
+            # a = self.a.to("AU").value
+            # e = self.e
+
+            # Find the stellar flux at the planet's location as a fraction of earth's
+            earth_Lp = const.L_sun / (1 * (1 + (0.0167**2) / 2)) ** 2
+            self.Lp = self.Ls / (a * (1 + (e**2) / 2)) ** 2 / earth_Lp
+
+            # Find Planet Rp range
+            Rp_bins = np.array([0, 0.5, 1.0, 1.75, 3.5, 6.0, 14.3, 11.2 * 4.6])
+            # Rp_lo = Rp_bins[:-1]
+            # Rp_hi = Rp_bins[1:]
+            Rp_types = [
+                "Sub-Rocky",
+                "Rocky",
+                "Super-Earth",
+                "Sub-Neptune",
+                "Sub-Jovian",
+                "Jovian",
+                "Super-Jovian",
+            ]
+            Rp_phase_inds = [0, 2, 2, 7, 7, 4, 4]
+            Rp_p_vals = [0.2, 0.2, 0.2, 0.5, 0.5, 0.5, 0.5]
+            L_bins = np.array(
+                [
+                    [1000, 182, 1.0, 0.28, 0.0035, 5e-5],
+                    [1000, 182, 1.0, 0.28, 0.0035, 5e-5],
+                    [1000, 187, 1.12, 0.30, 0.0030, 5e-5],
+                    [1000, 188, 1.15, 0.32, 0.0030, 5e-5],
+                    [1000, 220, 1.65, 0.45, 0.0030, 5e-5],
+                    [1000, 220, 1.65, 0.40, 0.0025, 5e-5],
+                    [1000, 220, 1.68, 0.45, 0.0025, 5e-5],
+                    [1000, 220, 1.68, 0.45, 0.0025, 5e-5],
+                ]
+            )
+            # self.L_bins = np.array(
+            #     [
+            #         [1000, 182, 1.0, 0.28, 0.0035, 5e-5],
+            #         [1000, 187, 1.12, 0.30, 0.0030, 5e-5],
+            #         [1000, 188, 1.15, 0.32, 0.0030, 5e-5],
+            #         [1000, 220, 1.65, 0.45, 0.0030, 5e-5],
+            #         [1000, 220, 1.65, 0.40, 0.0025, 5e-5],
+            #     ]
+            # )
+
+            # Find the bin of the radius
+            Rp_bin = np.digitize(Rp, Rp_bins) - 1
+            try:
+                self.Rp_type = Rp_types[Rp_bin]
+                self.phiIndex[i] = Rp_phase_inds[Rp_bin]
+                self.p[i] = Rp_p_vals[Rp_bin]
+            except IndexError:
+                print(f"Error handling Rp_type of planet with Rp_bin of {Rp_bin}")
+                # Defaults to Earth
+                self.phiIndex[i] = 2
+                self.p[i] = 0.2
+
+            # TODO Fix this to give correct when at edge cases since technically
+            # they're not straight lines
+
+            # index of planet temp. cold,warm,hot
+            L_types = ["Very Hot", "Hot", "Warm", "Cold", "Very Cold"]
+            specific_L_bins = L_bins[Rp_bin, :]
+            L_bin = np.digitize(self.Lp.decompose().value, specific_L_bins) - 1
+            try:
+                self.L_type = L_types[L_bin]
+            except IndexError:
+                print(f"Error handling L_type of planet with L_bin of {L_bin}")
 
 
 class TqdmUpTo(tqdm):

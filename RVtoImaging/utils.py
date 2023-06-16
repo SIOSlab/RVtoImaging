@@ -108,7 +108,7 @@ def mean_anom(obj, times):
     return M
 
 
-def calc_position_vectors(obj, times):
+def calc_position_vectors(obj, times, unit=None):
     orbElem = (
         np.array(obj.a.decompose().value, ndmin=1),
         np.array(obj.e, ndmin=1),
@@ -122,6 +122,8 @@ def calc_position_vectors(obj, times):
         E = kt.eccanom(M.to(u.rad).value, obj.e)
         mu = obj.mu.decompose().value
         r, v = kt.orbElem2vec(E, mu, orbElem)
+        if unit is not None:
+            r = (r * u.m).to(unit).value
         x.append(r[0])
         y.append(r[1])
         z.append(r[2])
@@ -596,10 +598,11 @@ def flatten_dict(dictionary, parent_key="", separator="_"):
     return dict(items)
 
 
-def EXOSIMS_script_hash(script):
+def EXOSIMS_script_hash(script_path, specs=None):
     valid_types = [str, int, float, u.quantity.Quantity, type(None)]
-    with open(script) as f:
-        specs = json.loads(f.read())
+    if specs is None:
+        with open(script_path) as f:
+            specs = json.loads(f.read())
     flattened_dict = flatten_dict(specs)
     all_info = []
     rejected = []
