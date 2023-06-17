@@ -750,8 +750,8 @@ class ImagingSchedule:
                     f"{pInd}_{self.best_precision}.png"
                 )
 
-                if fig_path.exists():
-                    continue
+                # if fig_path.exists():
+                #     continue
                 eWAs = []
                 edMags = []
                 pdMags = np.zeros((len(plot_times), n_inds))
