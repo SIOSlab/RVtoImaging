@@ -25,6 +25,8 @@ import RVtoImaging.utils as utils
 from EXOSIMS.util.get_module import get_module_from_specs
 from EXOSIMS.util.phaseFunctions import realSolarSystemPhaseFunc
 from EXOSIMS.util.utils import dictToSortedStr, genHexStr
+
+# from EXOSIMS.util.vprint import vprint
 from RVtoImaging.logger import logger
 
 
@@ -67,6 +69,7 @@ class ImagingProbability:
         with open(self.script_path) as f:
             specs = json.loads(f.read())
         self.SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
+        # self.SS.vprint = vprint(False)
         if not np.all(self.SS.SimulatedUniverse.a == universe.SU.a):
             SU = self.SS.SimulatedUniverse
             circular = SU.e == 0
@@ -106,7 +109,7 @@ class ImagingProbability:
         # max_int_time = self.SS.TargetList.OpticalSystem.intCutoff
         self.int_times = self.gen_int_times(min_int_time, max_int_time)
         self.WAs = self.gen_WAs()
-        fEZ_quantile = params["fEZ_quantile"]
+        self.fEZ_quantile = params["fEZ_quantile"]
 
         self.pdet_times = Time(
             np.arange(start_time.jd, end_time.jd, min_int_time.to(u.d).value),
@@ -128,7 +131,7 @@ class ImagingProbability:
             f"{end_time.jd:.2f}_"
             f"{min_int_time.to(u.d).value:.2f}_"
             f"{max_int_time.to(u.d).value:.2f}_"
-            f"{fEZ_quantile:.2f}_"
+            f"{self.fEZ_quantile:.2f}_"
             f"{self.script_hash}"
         )
         self.settings_hash = genHexStr(settings_str)
@@ -187,7 +190,7 @@ class ImagingProbability:
                         system,
                         self.int_times,
                         self.WAs,
-                        fEZ_quantile,
+                        self.fEZ_quantile,
                         system_path,
                         workers,
                     )

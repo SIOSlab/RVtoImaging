@@ -2,6 +2,7 @@ import copy
 import itertools
 import math
 import pickle
+from collections import Counter
 from pathlib import Path
 
 import astropy.units as u
@@ -86,9 +87,11 @@ class ImagingSchedule:
             flat_info_path = Path(self.result_path, "flat_info.p")
             summary_info_path = Path(self.result_path, "summary.p")
             if not target_info_path.exists():
-                self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
-                    self.schedule
-                )
+                (
+                    self.targetdf,
+                    self.flatdf,
+                    self.summary_stats,
+                ) = pdet.SS.sim_fixed_schedule(self.schedule)
                 self.summary_stats["fitted_planets"] = sum(
                     [len(pdet.pops[key]) for key in pdet.pops.keys()]
                 )
@@ -111,15 +114,17 @@ class ImagingSchedule:
             finished_filename = Path(
                 f"{str(Path(*self.result_path.parts[-3:])).replace('/', 'X')}.p"
             )
-            finished_path = Path(self.result_path.parents[2], "finished", finished_filename)
-            if not finished_path.parent.exists():
-                finished_path.parent.mkdir()
+            self.finished_path = Path(
+                self.result_path.parents[2], "finished", finished_filename
+            )
+            if not self.finished_path.parent.exists():
+                self.finished_path.parent.mkdir()
             finish_params = copy.deepcopy(self.params)
             finish_params["best_precision"] = self.best_precision
             finish_params["universe"] = self.result_path.parts[-3]
             finish_params["result_path"] = self.result_path
 
-            with open(finished_path, "wb") as f:
+            with open(self.finished_path, "wb") as f:
                 pickle.dump(finish_params, f)
 
             self.schedule_plots(pdet)
@@ -730,24 +735,106 @@ class ImagingSchedule:
             format="jd",
             scale="tai",
         )
+        figsc, axsc = plt.subplots(figsize=(10, 7))
 
-        det_colors = {0: "red", 1: "green", -1: "yellow", -2: "yellow"}
+        # Could do colorbars like the SPIE paper for the 1 day pdet values
+        nplans = len(SU.plan2star)
+        star_names = SS.TargetList.Name[SU.plan2star]
+        star_counter = Counter(star_names)
+        planet_names = {}
+        pInd = 0
+        used_stars = []
+        for star_name in star_names:
+            if star_name in used_stars:
+                continue
+            else:
+                used_stars.append(star_name)
+            for pnum in range(star_counter[star_name]):
+                planet_names[pInd] = f"{star_name}{chr(ord('a')+ pnum)}"
+                pInd += 1
+
+        # Planets get put at y=pInd+1
+        axsc.set_ylim([0, nplans + 2])
+        axsc.set_yticks(np.arange(0, nplans + 2, 1))
+        tick_labels = [""]
+        for pind, label in enumerate(planet_names.values()):
+            if pind in self.targetdf.columns:
+                success = self.targetdf[pind]["success"]
+                fail = self.targetdf[pind]["fail"]
+                tick_labels.append(f"{success}/{success+fail}-{label}")
+            else:
+                tick_labels.append(f"0/0 - {label}")
+
+        # tick_labels = list(planet_names.values())
+        # tick_labels.insert(0, "")
+        tick_labels.append("")
+        axsc.set_yticklabels(tick_labels)
+        axsc.set_xlim([0, end_time_jd - start_time_jd])
+        axsc.set_xlabel("Time since mission start (d)")
+
+        axsc.set_title(
+            f"Observing schedule, "
+            f"RV sigma: {self.best_precision} m/s, "
+            f"fEZ_q:{pdet.fEZ_quantile:.2f}"
+        )
+        for yval in range(nplans + 2):
+            axsc.axhline(y=yval + 0.5, alpha=0.5, ls="--")
+
+        pdet_int_time = (
+            np.median(self.block_multiples) * self.block_length.to(u.d).value
+        )
+        cmap = plt.get_cmap("viridis")
+        # pdet_cbar_ax = figsc.add_axes()
+        cbar_2 = figsc.colorbar(
+            mpl.cm.ScalarMappable(cmap=cmap), ax=axsc, alpha=0.5, location="right"
+        )
+        cbar_2.set_label(r"$P_{det}(t_{int}=$" + f"{pdet_int_time:.0f}d)")
+
+        det_colors = {0: "red", 1: "lime", -1: "yellow", -2: "yellow"}
+        det_colors_schedule = copy.deepcopy(det_colors)
+        det_colors_schedule[1] = "black"
         n_inds = 50
         plot_times = obs_times[::10]
         dt = 10 * self.block_length.to(u.d).value
         SS.reset_sim(genNewPlanets=False)
         used_sInds = []
         for system_name in tqdm(pdet.pops.keys(), desc="Generating plots"):
-            if system_name not in self.schedule.star.values:
-                continue
+            system_pdets = pdet.pdets[system_name]
+
             pops = pdet.pops[system_name]
-            for pop in pops:
-                fig, (ax_WA, ax_dMag) = plt.subplots(figsize=(10, 5), ncols=2)
+            for pval, pop in enumerate(pops):
+                planet_pdet = system_pdets.pdet[pval]
+                pdet_vals = planet_pdet.interp(
+                    time=obs_times.datetime, int_time=pdet_int_time
+                ).values
+
+                # Have to find the right pInd to plot on since it's not
+                # in the same order
+                pop = pdet.pops[system_name][pval]
                 sInd = np.where(SS.TargetList.Name == system_name)[0][0]
                 pInds = np.where(SU.plan2star == sInd)[0]
                 pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
+                extent = 0, end_time_jd - start_time_jd, pInd + 0.5, pInd + 1.5
+                axsc.imshow(
+                    np.expand_dims(pdet_vals, axis=1).T,
+                    aspect="auto",
+                    interpolation="none",
+                    extent=extent,
+                    cmap=cmap,
+                    norm=mpl.colors.Normalize(0, 1),
+                    alpha=0.5,
+                    zorder=0,
+                )
+                if system_name not in self.schedule.star.values:
+                    continue
+                fig, (ax_WA, ax_dMag) = plt.subplots(figsize=(10, 5), ncols=2)
+                # sInd = np.where(SS.TargetList.Name == system_name)[0][0]
+                # pInds = np.where(SU.plan2star == sInd)[0]
+                # pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
                 if pInd not in self.targetdf.columns:
                     continue
+                # if pInd == 22:
+                #     breakpoint()
                 if sInd in used_sInds:
                     # If this isn't here then things get messed up for
                     # multiple-planet systems fitted and observed
@@ -773,7 +860,6 @@ class ImagingSchedule:
                     pWA, pdMag = pop.prop_for_imaging(obs_time)
                     pdMags[i] = pdMag[:n_inds]
                     pWAs[i] = pWA[:n_inds].to(u.arcsec).value
-                cmap = plt.get_cmap("viridis")
                 colors = cmap(np.linspace(0, 1, n_inds))
                 for j in range(n_inds):
                     ax_dMag.plot(
@@ -823,6 +909,22 @@ class ImagingSchedule:
                     ax_WA.add_patch(WA_sq)
                     intstr += f"{_tint:.2f}, "
                     SNRstr += f"{self.targetdf[pInd]['SNR'][nobs]:.2f}, "
+
+                    obs_sq = mpl.patches.Rectangle(
+                        (zeroed_time, pInd + 0.5),
+                        width=_tint,
+                        height=1,
+                        zorder=1,
+                        # color="white",
+                        edgecolor=det_colors_schedule[_det_status],
+                        hatch=r"\\",
+                        alpha=1,
+                        fill=False,
+                    )
+                    axsc.add_patch(obs_sq)
+                    axsc.axvline(x=zeroed_time, alpha=0.25)
+                    axsc.axvline(x=zeroed_time + _tint, alpha=0.25, ls="--")
+
                 fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.0e}"
                 intstr = intstr[:-2]
                 SNRstr = SNRstr[:-2]
@@ -839,3 +941,8 @@ class ImagingSchedule:
                     f"fEZ: {fEZstr}"
                 )
                 fig.savefig(fig_path, dpi=300)
+        figsc_path1 = Path(f"{self.result_path}/full_schedule.png")
+        figsc_path2 = Path(f"{str(self.finished_path)[-1]}.png")
+        figsc.tight_layout()
+        figsc.savefig(figsc_path1, dpi=300)
+        figsc.savefig(figsc_path2, dpi=300)
