@@ -942,7 +942,7 @@ class ImagingSchedule:
                 )
                 fig.savefig(fig_path, dpi=300)
         figsc_path1 = Path(f"{self.result_path}/full_schedule.png")
-        figsc_path2 = Path(f"{str(self.finished_path)[-1]}.png")
+        figsc_path2 = Path(f"{self.finished_path}ng")
         figsc.tight_layout()
         figsc.savefig(figsc_path1, dpi=300)
         figsc.savefig(figsc_path2, dpi=300)
