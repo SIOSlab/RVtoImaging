@@ -79,6 +79,9 @@ class ImagingSchedule:
             self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
                 self.schedule
             )
+            self.summary_stats["fitted_planets"] = sum(
+                [len(pdet.pops[key]) for key in pdet.pops.keys()]
+            )
             with open(target_info_path, "wb") as f:
                 pickle.dump(self.targetdf, f)
             with open(flat_info_path, "wb") as f:
@@ -695,15 +698,17 @@ class ImagingSchedule:
         SU = SS.SimulatedUniverse
         start_time_jd = SS.TimeKeeping.missionStart.jd
         end_time_jd = start_time_jd + self.sim_length.to(u.d).value
-        dt = self.block_length.to(u.d).value
         obs_times = Time(
-            np.arange(start_time_jd, end_time_jd, dt),
+            np.arange(start_time_jd, end_time_jd, self.block_length.to(u.d).value),
             format="jd",
             scale="tai",
         )
 
         det_colors = {0: "red", 1: "green", -1: "yellow", -2: "yellow"}
         n_inds = 50
+        plot_times = obs_times[::10]
+        dt = 10 * self.block_length.to(u.d).value
+        SS.reset_sim(genNewPlanets=False)
         for system_name in tqdm(pdet.pops.keys(), desc="Generating plots"):
             if system_name not in self.schedule.star.values:
                 continue
@@ -728,9 +733,9 @@ class ImagingSchedule:
                     continue
                 eWAs = []
                 edMags = []
-                pdMags = np.zeros((len(obs_times), n_inds))
-                pWAs = np.zeros((len(obs_times), n_inds))
-                for i, obs_time in enumerate(obs_times):
+                pdMags = np.zeros((len(plot_times), n_inds))
+                pWAs = np.zeros((len(plot_times), n_inds))
+                for i, obs_time in enumerate(plot_times):
                     SU.propag_system(sInd, dt * u.d)
                     edMags.append(SU.dMag[pInd])
                     eWAs.append(SU.WA[pInd].to(u.arcsec).value)
@@ -741,30 +746,31 @@ class ImagingSchedule:
                 colors = cmap(np.linspace(0, 1, n_inds))
                 for j in range(n_inds):
                     ax_dMag.plot(
-                        obs_times.jd - obs_times[0].jd,
+                        plot_times.jd - plot_times[0].jd,
                         pdMags[:, j],
                         color=colors[j],
                         label=f"{j}",
                         alpha=0.25,
                     )
                     ax_WA.plot(
-                        obs_times.jd - obs_times[0].jd,
+                        plot_times.jd - plot_times[0].jd,
                         pWAs[:, j],
                         color=colors[j],
                         label=f"{j}",
                         alpha=0.25,
                     )
-                ax_dMag.plot(obs_times.jd - obs_times[0].jd, edMags, color="k")
-                ax_WA.plot(obs_times.jd - obs_times[0].jd, eWAs, color="k")
+                ax_dMag.plot(plot_times.jd - plot_times[0].jd, edMags, color="k")
+                ax_WA.plot(plot_times.jd - plot_times[0].jd, eWAs, color="k")
 
                 dMagLims = ax_dMag.get_ylim()
                 dMagheight = dMagLims[1] - dMagLims[0]
                 WALims = ax_WA.get_ylim()
                 WAheight = WALims[1] - WALims[0]
+                fEZstr = ""
                 for nobs, _t in enumerate(self.targetdf[pInd].obs_time):
                     _det_status = self.targetdf[pInd].det_status[nobs]
                     _tint = self.targetdf[pInd].int_time[nobs].to(u.d).value
-                    zeroed_time = _t.jd - obs_times[0].jd
+                    zeroed_time = _t.jd - plot_times[0].jd
                     dMag_sq = mpl.patches.Rectangle(
                         (zeroed_time, dMagLims[0]),
                         width=_tint,
@@ -781,10 +787,15 @@ class ImagingSchedule:
                         color=det_colors[_det_status],
                     )
                     ax_WA.add_patch(WA_sq)
+                    fEZstr += f"{self.targetdf[pInd]['fEZ'][nobs].value:.1e},"
 
                 ax_dMag.set_ylabel(r"$\Delta$mag")
                 ax_WA.set_ylabel('Planet-star angular separation (")')
                 ax_WA.set_xlabel("Time since mission start (d)")
                 ax_dMag.set_xlabel("Time since mission start (d)")
-                fig.suptitle(f"{system_name} - RV precision: {best_precision} m/s")
+                fig.suptitle(
+                    f"{system_name} - "
+                    f"RV precision: {best_precision} m/s - "
+                    f"fEZs: {fEZstr}"
+                )
                 fig.savefig(f"{self.result_path}/{pInd}.png", dpi=300)

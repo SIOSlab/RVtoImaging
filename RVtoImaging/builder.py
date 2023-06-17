@@ -142,6 +142,7 @@ class BaseBuilder(Builder):
                 "completed_searches"
             ] += self.rv2img.orbitfit.fits_completed
             self.rv_fits_params["loaded_searches"] += self.rv2img.orbitfit.fits_loaded
+            logger.info("Simulation complete\n")
 
 
 class RVtoImaging:
