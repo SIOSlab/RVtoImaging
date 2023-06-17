@@ -76,51 +76,53 @@ class ImagingSchedule:
         )
         self.create_schedule(pdet, universe_dir, workers)
         # Add schedule to the SS module
-
-        with open(Path(self.result_path, "spec.p"), "wb") as f:
-            pickle.dump(self.params, f)
-
-        target_info_path = Path(self.result_path, "per_target.p")
-        flat_info_path = Path(self.result_path, "flat_info.p")
-        summary_info_path = Path(self.result_path, "summary.p")
-        if not target_info_path.exists():
-            self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
-                self.schedule
-            )
-            self.summary_stats["fitted_planets"] = sum(
-                [len(pdet.pops[key]) for key in pdet.pops.keys()]
-            )
-            with open(target_info_path, "wb") as f:
-                pickle.dump(self.targetdf, f)
-            with open(flat_info_path, "wb") as f:
-                pickle.dump(self.flatdf, f)
-            with open(summary_info_path, "wb") as f:
-                pickle.dump(self.summary_stats, f)
+        if self.schedule.empty:
+            logger.warn(f"No observations scheduled for {self.result_path}")
         else:
-            with open(target_info_path, "rb") as f:
-                self.targetdf = pickle.load(f)
-            with open(flat_info_path, "rb") as f:
-                self.flatdf = pickle.load(f)
-            with open(summary_info_path, "rb") as f:
-                self.summary_stats = pickle.load(f)
+            with open(Path(self.result_path, "spec.p"), "wb") as f:
+                pickle.dump(self.params, f)
 
-        # This is just to pull all the finished stuff in one place to make
-        # post-processing easier
-        finished_filename = Path(
-            f"{str(Path(*self.result_path.parts[-3:])).replace('/', 'X')}.p"
-        )
-        finished_path = Path(self.result_path.parents[2], "finished", finished_filename)
-        if not finished_path.parent.exists():
-            finished_path.parent.mkdir()
-        finish_params = copy.deepcopy(self.params)
-        finish_params["best_precision"] = self.best_precision
-        finish_params["universe"] = self.result_path.parts[-3]
-        finish_params["result_path"] = self.result_path
+            target_info_path = Path(self.result_path, "per_target.p")
+            flat_info_path = Path(self.result_path, "flat_info.p")
+            summary_info_path = Path(self.result_path, "summary.p")
+            if not target_info_path.exists():
+                self.targetdf, self.flatdf, self.summary_stats = pdet.SS.sim_fixed_schedule(
+                    self.schedule
+                )
+                self.summary_stats["fitted_planets"] = sum(
+                    [len(pdet.pops[key]) for key in pdet.pops.keys()]
+                )
+                with open(target_info_path, "wb") as f:
+                    pickle.dump(self.targetdf, f)
+                with open(flat_info_path, "wb") as f:
+                    pickle.dump(self.flatdf, f)
+                with open(summary_info_path, "wb") as f:
+                    pickle.dump(self.summary_stats, f)
+            else:
+                with open(target_info_path, "rb") as f:
+                    self.targetdf = pickle.load(f)
+                with open(flat_info_path, "rb") as f:
+                    self.flatdf = pickle.load(f)
+                with open(summary_info_path, "rb") as f:
+                    self.summary_stats = pickle.load(f)
 
-        with open(finished_path, "wb") as f:
-            pickle.dump(finish_params, f)
+            # This is just to pull all the finished stuff in one place to make
+            # post-processing easier
+            finished_filename = Path(
+                f"{str(Path(*self.result_path.parts[-3:])).replace('/', 'X')}.p"
+            )
+            finished_path = Path(self.result_path.parents[2], "finished", finished_filename)
+            if not finished_path.parent.exists():
+                finished_path.parent.mkdir()
+            finish_params = copy.deepcopy(self.params)
+            finish_params["best_precision"] = self.best_precision
+            finish_params["universe"] = self.result_path.parts[-3]
+            finish_params["result_path"] = self.result_path
 
-        self.schedule_plots(pdet)
+            with open(finished_path, "wb") as f:
+                pickle.dump(finish_params, f)
+
+            self.schedule_plots(pdet)
 
     def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
