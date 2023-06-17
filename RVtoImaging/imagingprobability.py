@@ -1,7 +1,7 @@
 import json
 import pickle
 from itertools import repeat
-from multiprocessing import Pool, Value
+from multiprocessing import Value
 from pathlib import Path
 
 import astropy.constants as const
@@ -14,6 +14,7 @@ import pandas as pd
 import xarray as xr
 from astropy.time import Time
 from keplertools import fun as kt
+from pathos.multiprocessing import Pool
 from scipy.interpolate import interp1d, interp2d
 from tqdm import tqdm
 
