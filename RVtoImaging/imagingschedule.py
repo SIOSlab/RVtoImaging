@@ -129,6 +129,7 @@ class ImagingSchedule:
             f"schedule_{self.hash}.p".replace(" ", ""),
         )
         if schedule_path.exists():
+            logger.info(f"Loading schedule from {schedule_path}")
             with open(schedule_path, "rb") as f:
                 final_df = pickle.load(f)
         else:
@@ -732,7 +733,7 @@ class ImagingSchedule:
         n_inds = 50
         plot_times = obs_times[::10]
         dt = 10 * self.block_length.to(u.d).value
-        SS.reset_sim(genNewPlanets=False)
+        used_sInds = []
         for system_name in tqdm(pdet.pops.keys(), desc="Generating plots"):
             if system_name not in self.schedule.star.values:
                 continue
@@ -744,6 +745,12 @@ class ImagingSchedule:
                 pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
                 if pInd not in self.targetdf.columns:
                     continue
+                if sInd in used_sInds:
+                    # If this isn't here then things get messed up for
+                    # multiple-planet systems fitted and observed
+                    SS.reset_sim(genNewPlanets=False)
+                else:
+                    used_sInds.append(sInd)
 
                 fig_path = Path(
                     f"{self.result_path}/{system_name.replace(' ', '_')}_"
@@ -789,6 +796,7 @@ class ImagingSchedule:
                 dMagheight = dMagLims[1] - dMagLims[0]
                 WALims = ax_WA.get_ylim()
                 WAheight = WALims[1] - WALims[0]
+                intstr = ""
                 SNRstr = ""
                 for nobs, _t in enumerate(self.targetdf[pInd].obs_time):
                     _det_status = self.targetdf[pInd].det_status[nobs]
@@ -810,8 +818,10 @@ class ImagingSchedule:
                         color=det_colors[_det_status],
                     )
                     ax_WA.add_patch(WA_sq)
-                    SNRstr += f"{self.targetdf[pInd]['SNR'][nobs]:.1f}, "
-                fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.1e}"
+                    intstr += f"{_tint:.2f}, "
+                    SNRstr += f"{self.targetdf[pInd]['SNR'][nobs]:.2f}, "
+                fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.0e}"
+                intstr = intstr[:-2]
                 SNRstr = SNRstr[:-2]
 
                 ax_dMag.set_ylabel(r"$\Delta$mag")
@@ -821,6 +831,7 @@ class ImagingSchedule:
                 fig.suptitle(
                     f"{system_name}, "
                     f"RV precision: {self.best_precision} m/s, "
+                    f"int time: [{intstr}] d, "
                     f"SNRs: [{SNRstr}], "
                     f"fEZ: {fEZstr}"
                 )

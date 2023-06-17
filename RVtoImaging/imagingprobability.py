@@ -27,6 +27,34 @@ from EXOSIMS.util.utils import dictToSortedStr, genHexStr
 from RVtoImaging.logger import logger
 
 
+def dim_dMag_obj(fZ, int_times, WAs, fEZs, TL, sInd):
+    OS = TL.OpticalSystem
+    mode = list(filter(lambda mode: mode["detectionMode"] is True, OS.observingModes))[
+        0
+    ]
+    # Formatting for calc_dMag_per_intTime
+    _int_times = [
+        np.array(int_time.to(u.d).value, ndmin=1) * u.d for int_time in int_times
+    ]
+    _WAs = [np.array(WA.to(u.arcsec).value, ndmin=1) * u.arcsec for WA in WAs]
+    _fEZs = [np.array(fEZ, ndmin=1) * (1 / u.arcsec**2) for fEZ in fEZs]
+    dim_dMag_arr = np.zeros([len(int_times), len(WAs)])
+    for i, _int_time in enumerate(_int_times):
+        for j, _WA in enumerate(_WAs):
+            dim_dMag_arr[i, j] = OS.calc_dMag_per_intTime(
+                _int_time,
+                TL,
+                sInd,
+                fZ,
+                _fEZs[j],
+                _WA,
+                mode,
+            )[0]
+            fZ_counter.value += 1
+            fZ_pbar.update_to(fZ_counter.value)
+    return dim_dMag_arr
+
+
 class ImagingProbability:
     """
     Base class to do probability of detection calculations
@@ -77,6 +105,7 @@ class ImagingProbability:
         # max_int_time = self.SS.TargetList.OpticalSystem.intCutoff
         self.int_times = self.gen_int_times(min_int_time, max_int_time)
         self.WAs = self.gen_WAs()
+        fEZ_quantile = params["fEZ_quantile"]
 
         self.pdet_times = Time(
             np.arange(start_time.jd, end_time.jd, min_int_time.to(u.d).value),
@@ -98,6 +127,7 @@ class ImagingProbability:
             f"{end_time.jd:.2f}_"
             f"{min_int_time.to(u.d).value:.2f}_"
             f"{max_int_time.to(u.d).value:.2f}_"
+            f"{fEZ_quantile:.2f}_"
             f"{self.script_hash}"
         )
         self.settings_hash = genHexStr(settings_str)
@@ -152,7 +182,13 @@ class ImagingProbability:
                     # Create the integration times and dMag0s
                     # dMag0s = self.gen_dMag0s(self.SS, system, self.int_times)
                     dim_dMag_interps = self.gen_dim_dMag_interps(
-                        self.SS, system, self.int_times, self.WAs, system_path
+                        self.SS,
+                        system,
+                        self.int_times,
+                        self.WAs,
+                        fEZ_quantile,
+                        system_path,
+                        workers,
                     )
                     system_pdets = pd.DataFrame(
                         np.zeros((len(self.int_times), len(self.pdet_times))),
@@ -188,6 +224,7 @@ class ImagingProbability:
                             self.n_fits,
                             planet_num,
                         )
+                        # pop.gen_fEZ_corrections(self.SS, system)
                         if pop.input_error is True:
                             input_error = True
                             continue
@@ -295,12 +332,14 @@ class ImagingProbability:
             )
         return dMag0s
 
-    def gen_dim_dMag_interps(self, SS, system, int_times, WAs, system_path):
+    def gen_dim_dMag_interps(
+        self, SS, system, int_times, WAs, fEZ_quantile, system_path, workers
+    ):
         TL = SS.TargetList
         OS = TL.OpticalSystem
         ZL = TL.ZodiacalLight
         fZ = ZL.fZ0
-        fEZ = ZL.fEZ0
+        # fEZ0 = ZL.fEZ0
 
         mode = list(
             filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
@@ -317,11 +356,50 @@ class ImagingProbability:
             specs.pop("seed")
         hash = utils.EXOSIMS_script_hash(None, specs=specs)
 
+        d = WAs.to(u.rad).value * TL.dist[target_sInd].to(u.AU)
+        inc = np.repeat(135, len(WAs)) * u.deg
+        MV = TL.MV[target_sInd]
+        # Absolute magnitude of the star (in the V band)
+        MV = np.array(MV, ndmin=1, copy=False)
+        # Absolute magnitude of the Sun (in the V band)
+        MVsun = 4.83
+
+        # # Generating a nEZ value
+        # nStars = len(MV)
+        nEZ_arr = ZL.gen_systemnEZ(10000)
+        nEZ_per = np.quantile(nEZ_arr, fEZ_quantile)
+
+        # inclinations should be strictly in [0, pi], but allow for weird sampling:
+        beta = inc.to("deg").value
+        beta[beta > 180] -= 180
+
+        # latitudinal variations are symmetric about 90 degrees so compute the
+        # supplementary angle for inclination > 90 degrees
+        mask = beta > 90
+        beta[mask] = 180.0 - beta[mask]
+
+        # finally, the input to the model is 90-inclination
+        beta = 90.0 - beta
+        fbeta = ZL.zodi_latitudinal_correction_factor(beta * u.deg, model="interp")
+
+        fEZs = (
+            nEZ_per
+            * 10 ** (-0.4 * ZL.magEZ)
+            * 10.0 ** (-0.4 * (MV - MVsun))
+            * fbeta
+            / d.to("AU").value ** 2
+            / u.arcsec**2
+            * 1
+        )
+
         interps_path = Path(
             system_path.parents[3],
             "dMag_interps",
             hash,
-            f"{system.star.name.replace(' ', '_')}_{genHexStr(str(fZs))}.p",
+            (
+                f"{system.star.name.replace(' ', '_')}_{genHexStr(str(fZs))}_"
+                f"{fEZ_quantile:.2f}.p"
+            ),
         )
         interps_path.parent.mkdir(parents=True, exist_ok=True)
         if interps_path.exists():
@@ -330,12 +408,9 @@ class ImagingProbability:
                 dim_dMag_interps = pickle.load(f)
         else:
             logger.info(f"Creating dimmest dMag interpolants for {system.star.name}")
-            fEZ = np.array(fEZ.to(1 / u.arcsec**2).value, ndmin=1) * (
-                1 / u.arcsec**2
-            )
 
-            dim_dMag_arr = np.zeros([len(int_times), len(WAs), len(fZs)])
-
+            global fZ_pbar
+            global fZ_counter
             fZ_pbar = TqdmUpTo(
                 total=len(int_times) * len(WAs) * len(fZs),
                 desc=(
@@ -345,49 +420,66 @@ class ImagingProbability:
                     f"fZs:{len(fZs)}"
                 ),
             )
-            counter = 0
+            fZ_counter = Value("i", 0, lock=True)
 
             # Formatting for calc_dMag_per_intTime
-            _int_times = [
-                np.array(int_time.to(u.d).value, ndmin=1) * u.d
-                for int_time in int_times
-            ]
-            _WAs = [np.array(WA.to(u.arcsec).value, ndmin=1) * u.arcsec for WA in WAs]
             _fZs = [np.array(fZ, ndmin=1) * (1 / u.arcsec**2) for fZ in fZs]
-            for i, _int_time in enumerate(_int_times):
-                for j, _WA in enumerate(_WAs):
-                    for k, _fZ in enumerate(_fZs):
-                        dim_dMag_arr[i, j, k] = OS.calc_dMag_per_intTime(
-                            _int_time,
-                            TL,
-                            target_sInd,
-                            _fZ,
-                            fEZ,
-                            _WA,
-                            mode,
-                        )[0]
-                        counter += 1
-                        fZ_pbar.update_to(counter)
+            func_args = zip(
+                _fZs,
+                repeat(int_times),
+                repeat(WAs),
+                repeat(fEZs),
+                repeat(TL),
+                repeat(target_sInd),
+            )
+
+            with Pool(processes=workers) as pool:
+                result = pool.starmap(dim_dMag_obj, func_args)
 
             dim_dMag_interps = {}
-            for i, fZ in enumerate(fZs):
+            for fZ, arr in zip(fZs, result):
                 dim_dMag_interps[fZ] = interp2d(
                     WAs.to(u.arcsec).value,
                     int_times.to(u.d).value,
-                    dim_dMag_arr[:, :, i],
+                    arr,
                     fill_value=np.nan,
                 )
+
             with open(interps_path, "wb") as f:
                 pickle.dump(dim_dMag_interps, f)
             logger.info(f"Dimmest dMag interpolants saved to {interps_path}")
         return dim_dMag_interps
 
-    def gen_int_times(self, min_time, max_time):
-        # TL = SS.TargetList
-        # OS = TL.OpticalSystem
-        # min_time = 1 * u.hr
-        # max_time = OS.intCutoff
+    def dim_dMag_obj(self, fZ, int_times, WAs, fEZs, TL, sInd):
+        OS = TL.OpticalSystem
+        mode = list(
+            filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+        )[0]
+        # Formatting for calc_dMag_per_intTime
+        _int_times = [
+            np.array(int_time.to(u.d).value, ndmin=1) * u.d for int_time in int_times
+        ]
+        _WAs = [np.array(WA.to(u.arcsec).value, ndmin=1) * u.arcsec for WA in WAs]
+        _fEZs = [np.array(fEZ, ndmin=1) * (1 / u.arcsec**2) for fEZ in fEZs]
+        # _fZs = [np.array(fZ, ndmin=1) * (1 / u.arcsec**2) for fZ in fZs]
+        dim_dMag_arr = np.zeros([len(int_times), len(WAs)])
+        for i, _int_time in enumerate(_int_times):
+            for j, _WA in enumerate(_WAs):
+                # for k, _fZ in enumerate(_fZs):
+                dim_dMag_arr[i, j] = OS.calc_dMag_per_intTime(
+                    _int_time,
+                    TL,
+                    sInd,
+                    fZ,
+                    _fEZs[j],
+                    _WA,
+                    mode,
+                )[0]
+                counter.value += 1
+                fZ_pbar.update_to(counter)
+        return dim_dMag_arr
 
+    def gen_int_times(self, min_time, max_time):
         # Setting up array of integration times
         maxminratio = (max_time / min_time).decompose().value
         base = 2
@@ -398,14 +490,6 @@ class ImagingProbability:
         filtered = [x for x in combined if x <= maxminratio]
         filtered.append(maxminratio)
         int_times = min_time.to(u.d) * filtered
-        # int_times = (
-        #     np.logspace(
-        #         0,
-        #         np.log10((max_time / min_time).decompose()).value,
-        #         int(max_time.to(u.day).value),
-        #     )
-        #     * min_time
-        # ).to(u.d)
         return int_times
 
     def gen_WAs(self):
@@ -778,20 +862,7 @@ class PlanetPopulation:
             r = a * (1 - e**2) / (1 + e * np.cos(nu))
 
         s = r * np.sqrt(1 - np.sin(inc) ** 2 * np.sin(theta) ** 2)
-        # twoinc = 2 * inc
-        # twotheta = 2 * theta
-        # s = (r / 4) * np.sqrt(
-        #     4 * np.cos(twoinc)
-        #     + 4 * np.cos(twotheta)
-        #     - 2 * np.cos(twoinc - twotheta)
-        #     - 2 * np.cos(twoinc + twotheta)
-        #     + 12
-        # )
         beta = np.arccos(-np.sin(inc) * np.sin(theta))
-        # For gas giants
-        # p_phi = self.calc_p_phi(beta, photdict, bandinfo)
-        # For terrestrial planets
-        # phi = self.lambert_func(beta)
         phi = realSolarSystemPhaseFunc(beta, self.phiIndex)
 
         WA = np.arctan(s / self.dist_to_star).decompose()
@@ -804,7 +875,6 @@ class PlanetPopulation:
         TL = SS.TargetList
         OS = TL.OpticalSystem
         ZL = SS.ZodiacalLight
-        # Obs = SS.Observatory
         IWA = OS.IWA
         OWA = OS.OWA
         mode = list(
@@ -815,8 +885,6 @@ class PlanetPopulation:
         koT = SS.koTimes
 
         # Calculating the WA and dMag values of all orbits at all times
-        self.WA_dMag_obj(obs_times[0])
-        # breakpoint()
         with Pool(processes=workers) as pool:
             output = pool.map(self.WA_dMag_obj, obs_times)
         all_WAs = []
@@ -827,8 +895,6 @@ class PlanetPopulation:
         WAarr = np.array(all_WAs)
         dMagarr = np.array(all_dMags)
 
-        # fZs = np.zeros(len(obs_times))
-        # fZs = ZL.fZMap[mode['systName']][target_sInd][0]
         fZ_interp = interp1d(koT.jd, ZL.fZMap[mode["systName"]][target_sInd])
         fZs = fZ_interp(obs_times.jd)
         fZ_interp_keys = np.array([x for x in dim_dMag_interps.keys()])
@@ -1061,6 +1127,19 @@ class PlanetPopulation:
                 self.L_type = L_types[L_bin]
             except IndexError:
                 print(f"Error handling L_type of planet with L_bin of {L_bin}")
+
+
+class TestPlanet:
+    def __init__(self, a, e, inc, w, W, t0, M0, n, mu):
+        self.a = a
+        self.e = e
+        self.inc = inc
+        self.w = w
+        self.W = W
+        self.t0 = t0
+        self.M0 = M0
+        self.n = n
+        self.mu = mu
 
 
 class TqdmUpTo(tqdm):
