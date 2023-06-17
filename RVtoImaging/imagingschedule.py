@@ -753,9 +753,14 @@ class ImagingSchedule:
                 pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
                 if pInd not in self.targetdf.columns:
                     continue
-                # fig_path = Path(f"{self.result_path}/{pInd}.png")
-                # if fig_path.exists():
-                #     continue
+
+                fig_path = Path(
+                    f"{self.result_path}/{system_name.replace('_', ' ')}_"
+                    f"{pInd}_{best_precision}.png"
+                )
+
+                if fig_path.exists():
+                    continue
                 eWAs = []
                 edMags = []
                 pdMags = np.zeros((len(plot_times), n_inds))
@@ -828,10 +833,4 @@ class ImagingSchedule:
                     f"SNRs: [{SNRstr}], "
                     f"fEZ: {fEZstr}"
                 )
-                fig.savefig(
-                    (
-                        f"{self.result_path}/{system_name.replace('_', ' ')}_"
-                        f"{pInd}_{best_precision}.png"
-                    ),
-                    dpi=300,
-                )
+                fig.savefig(fig_path, dpi=300)
