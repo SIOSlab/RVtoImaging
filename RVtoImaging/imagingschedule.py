@@ -810,9 +810,9 @@ class ImagingSchedule:
                         color=det_colors[_det_status],
                     )
                     ax_WA.add_patch(WA_sq)
-                    SNRstr += f"{self.targetdf[pInd]['SNR'][nobs]:.1f},"
+                    SNRstr += f"{self.targetdf[pInd]['SNR'][nobs]:.1f}, "
                 fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.1e}"
-                SNRstr = SNRstr[:-1]
+                SNRstr = SNRstr[:-2]
 
                 ax_dMag.set_ylabel(r"$\Delta$mag")
                 ax_WA.set_ylabel('Planet-star angular separation (")')
