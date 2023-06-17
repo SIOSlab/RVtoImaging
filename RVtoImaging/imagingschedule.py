@@ -1,3 +1,4 @@
+import copy
 import itertools
 import json
 import math
@@ -26,6 +27,7 @@ class ImagingSchedule:
         params["workers"] = workers
         params["pdet_hash"] = pdet.settings_hash
         params["rv_dataset"] = {}
+        best_precision = np.inf
         for obs_run in rv_dataset_params["rv_observing_runs"]:
             # This is used to guarantee we're using a hash that a
             simple_run_spec = {}
@@ -33,6 +35,13 @@ class ImagingSchedule:
             simple_run_spec["start_time"] = obs_run["start_time"].jd
             simple_run_spec["end_time"] = obs_run["end_time"].jd
             simple_run_spec["sigma_terms"] = obs_run["sigma_terms"]
+
+            sigmas = np.array(
+                [val.to(u.m / u.s).value for val in obs_run["sigma_terms"].values()]
+            )
+            run_rms = np.sqrt(np.mean(np.square(sigmas)))
+            if run_rms < best_precision:
+                best_precision = run_rms
             scheme_spec = {}
             for scheme_term in obs_run["observation_scheme"].keys():
                 if scheme_term != "astroplan_constraints":
@@ -95,6 +104,22 @@ class ImagingSchedule:
                 self.flatdf = pickle.load(f)
             with open(summary_info_path, "rb") as f:
                 self.summary_stats = pickle.load(f)
+
+        # This is just to pull all the finished stuff in one place to make
+        # post-processing easier
+        finished_filename = Path(
+            f"{str(Path(*self.result_path.parts[-3:])).replace('/', 'X')}.p"
+        )
+        finished_path = Path(self.result_path.parents[2], "finished", finished_filename)
+        if not finished_path.parent.exists():
+            finished_path.parent.mkdir()
+        finish_params = copy.deepcopy(self.params)
+        finish_params["best_precision"] = best_precision
+        finish_params["universe"] = self.result_path.parts[-3]
+        finish_params["result_path"] = self.result_path
+
+        with open(finished_path, "wb") as f:
+            pickle.dump(finish_params, f)
 
         self.schedule_plots(pdet)
 
@@ -728,9 +753,9 @@ class ImagingSchedule:
                 pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
                 if pInd not in self.targetdf.columns:
                     continue
-                fig_path = Path(f"{self.result_path}/{pInd}.png")
-                if fig_path.exists():
-                    continue
+                # fig_path = Path(f"{self.result_path}/{pInd}.png")
+                # if fig_path.exists():
+                #     continue
                 eWAs = []
                 edMags = []
                 pdMags = np.zeros((len(plot_times), n_inds))
@@ -762,11 +787,13 @@ class ImagingSchedule:
                 ax_dMag.plot(plot_times.jd - plot_times[0].jd, edMags, color="k")
                 ax_WA.plot(plot_times.jd - plot_times[0].jd, eWAs, color="k")
 
+                ax_dMag.set_ylim([15, 35])
+                ax_WA.set_ylim([0, 0.3])
                 dMagLims = ax_dMag.get_ylim()
                 dMagheight = dMagLims[1] - dMagLims[0]
                 WALims = ax_WA.get_ylim()
                 WAheight = WALims[1] - WALims[0]
-                fEZstr = ""
+                SNRstr = ""
                 for nobs, _t in enumerate(self.targetdf[pInd].obs_time):
                     _det_status = self.targetdf[pInd].det_status[nobs]
                     _tint = self.targetdf[pInd].int_time[nobs].to(u.d).value
@@ -787,15 +814,24 @@ class ImagingSchedule:
                         color=det_colors[_det_status],
                     )
                     ax_WA.add_patch(WA_sq)
-                    fEZstr += f"{self.targetdf[pInd]['fEZ'][nobs].value:.1e},"
+                    SNRstr += f"{self.targetdf[pInd]['SNR'][nobs]:.1f},"
+                fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.1e}"
+                SNRstr = SNRstr[:-1]
 
                 ax_dMag.set_ylabel(r"$\Delta$mag")
                 ax_WA.set_ylabel('Planet-star angular separation (")')
                 ax_WA.set_xlabel("Time since mission start (d)")
                 ax_dMag.set_xlabel("Time since mission start (d)")
                 fig.suptitle(
-                    f"{system_name} - "
-                    f"RV precision: {best_precision} m/s - "
-                    f"fEZs: {fEZstr}"
+                    f"{system_name}, "
+                    f"RV precision: {best_precision} m/s, "
+                    f"SNRs: [{SNRstr}], "
+                    f"fEZ: {fEZstr}"
                 )
-                fig.savefig(f"{self.result_path}/{pInd}.png", dpi=300)
+                fig.savefig(
+                    (
+                        f"{self.result_path}/{system_name.replace('_', ' ')}_"
+                        f"{pInd}_{best_precision}.png"
+                    ),
+                    dpi=300,
+                )
