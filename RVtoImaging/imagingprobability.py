@@ -451,35 +451,6 @@ class ImagingProbability:
             logger.info(f"Dimmest dMag interpolants saved to {interps_path}")
         return dim_dMag_interps
 
-    def dim_dMag_obj(self, fZ, int_times, WAs, fEZs, TL, sInd):
-        OS = TL.OpticalSystem
-        mode = list(
-            filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
-        )[0]
-        # Formatting for calc_dMag_per_intTime
-        _int_times = [
-            np.array(int_time.to(u.d).value, ndmin=1) * u.d for int_time in int_times
-        ]
-        _WAs = [np.array(WA.to(u.arcsec).value, ndmin=1) * u.arcsec for WA in WAs]
-        _fEZs = [np.array(fEZ, ndmin=1) * (1 / u.arcsec**2) for fEZ in fEZs]
-        # _fZs = [np.array(fZ, ndmin=1) * (1 / u.arcsec**2) for fZ in fZs]
-        dim_dMag_arr = np.zeros([len(int_times), len(WAs)])
-        for i, _int_time in enumerate(_int_times):
-            for j, _WA in enumerate(_WAs):
-                # for k, _fZ in enumerate(_fZs):
-                dim_dMag_arr[i, j] = OS.calc_dMag_per_intTime(
-                    _int_time,
-                    TL,
-                    sInd,
-                    fZ,
-                    _fEZs[j],
-                    _WA,
-                    mode,
-                )[0]
-                counter.value += 1
-                fZ_pbar.update_to(counter)
-        return dim_dMag_arr
-
     def gen_int_times(self, min_time, max_time):
         # Setting up array of integration times
         maxminratio = (max_time / min_time).decompose().value

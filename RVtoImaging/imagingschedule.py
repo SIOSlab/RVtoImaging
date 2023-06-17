@@ -733,6 +733,7 @@ class ImagingSchedule:
         n_inds = 50
         plot_times = obs_times[::10]
         dt = 10 * self.block_length.to(u.d).value
+        SS.reset_sim(genNewPlanets=False)
         used_sInds = []
         for system_name in tqdm(pdet.pops.keys(), desc="Generating plots"):
             if system_name not in self.schedule.star.values:
