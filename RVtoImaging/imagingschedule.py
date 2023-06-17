@@ -1,6 +1,5 @@
 import copy
 import itertools
-import json
 import math
 import pickle
 from pathlib import Path
@@ -27,7 +26,7 @@ class ImagingSchedule:
         params["workers"] = workers
         params["pdet_hash"] = pdet.settings_hash
         params["rv_dataset"] = {}
-        best_precision = np.inf
+        self.best_precision = np.inf
         for obs_run in rv_dataset_params["rv_observing_runs"]:
             # This is used to guarantee we're using a hash that a
             simple_run_spec = {}
@@ -40,8 +39,8 @@ class ImagingSchedule:
                 [val.to(u.m / u.s).value for val in obs_run["sigma_terms"].values()]
             )
             run_rms = np.sqrt(np.mean(np.square(sigmas)))
-            if run_rms < best_precision:
-                best_precision = run_rms
+            if run_rms < self.best_precision:
+                self.best_precision = run_rms
             scheme_spec = {}
             for scheme_term in obs_run["observation_scheme"].keys():
                 if scheme_term != "astroplan_constraints":
@@ -114,7 +113,7 @@ class ImagingSchedule:
         if not finished_path.parent.exists():
             finished_path.parent.mkdir()
         finish_params = copy.deepcopy(self.params)
-        finish_params["best_precision"] = best_precision
+        finish_params["best_precision"] = self.best_precision
         finish_params["universe"] = self.result_path.parts[-3]
         finish_params["result_path"] = self.result_path
 
@@ -738,14 +737,6 @@ class ImagingSchedule:
             if system_name not in self.schedule.star.values:
                 continue
             pops = pdet.pops[system_name]
-            with open(
-                Path(pdet.system_paths[system_name].parent, "obs_spec.json"), "r"
-            ) as f:
-                obs_spec = json.load(f)
-            best_precision = np.inf
-            for _, obs_run in obs_spec["obs_runs"].items():
-                if obs_run["sigma_rv"] < best_precision:
-                    best_precision = obs_run["sigma_rv"]
             for pop in pops:
                 fig, (ax_WA, ax_dMag) = plt.subplots(figsize=(10, 5), ncols=2)
                 sInd = np.where(SS.TargetList.Name == system_name)[0][0]
@@ -755,8 +746,8 @@ class ImagingSchedule:
                     continue
 
                 fig_path = Path(
-                    f"{self.result_path}/{system_name.replace('_', ' ')}_"
-                    f"{pInd}_{best_precision}.png"
+                    f"{self.result_path}/{system_name.replace(' ', '_')}_"
+                    f"{pInd}_{self.best_precision}.png"
                 )
 
                 if fig_path.exists():
@@ -829,7 +820,7 @@ class ImagingSchedule:
                 ax_dMag.set_xlabel("Time since mission start (d)")
                 fig.suptitle(
                     f"{system_name}, "
-                    f"RV precision: {best_precision} m/s, "
+                    f"RV precision: {self.best_precision} m/s, "
                     f"SNRs: [{SNRstr}], "
                     f"fEZ: {fEZstr}"
                 )
