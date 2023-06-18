@@ -76,9 +76,25 @@ class ImagingSchedule:
             f" for {universe_dir.parts[-1].replace('_', ' ')} "
         )
         self.create_schedule(pdet, universe_dir, workers)
+
+        # This is just to pull all the finished stuff in one place to make
+        # post-processing easier
+        finished_filename = Path(
+            f"{str(Path(*self.result_path.parts[-3:])).replace('/', 'X')}.p"
+        )
+        self.finished_path = Path(
+            self.result_path.parents[2], "finished", finished_filename
+        )
+        if not self.finished_path.parent.exists():
+            self.finished_path.parent.mkdir()
+        finish_params = copy.deepcopy(self.params)
+        finish_params["best_precision"] = self.best_precision
+        finish_params["universe"] = self.result_path.parts[-3]
+        finish_params["result_path"] = self.result_path
         # Add schedule to the SS module
         if self.schedule.empty:
             logger.warn(f"No observations scheduled for {self.result_path}")
+            finish_params["schedule_found"] = False
         else:
             with open(Path(self.result_path, "spec.p"), "wb") as f:
                 pickle.dump(self.params, f)
@@ -108,26 +124,12 @@ class ImagingSchedule:
                     self.flatdf = pickle.load(f)
                 with open(summary_info_path, "rb") as f:
                     self.summary_stats = pickle.load(f)
-
-            # This is just to pull all the finished stuff in one place to make
-            # post-processing easier
-            finished_filename = Path(
-                f"{str(Path(*self.result_path.parts[-3:])).replace('/', 'X')}.p"
-            )
-            self.finished_path = Path(
-                self.result_path.parents[2], "finished", finished_filename
-            )
-            if not self.finished_path.parent.exists():
-                self.finished_path.parent.mkdir()
-            finish_params = copy.deepcopy(self.params)
-            finish_params["best_precision"] = self.best_precision
-            finish_params["universe"] = self.result_path.parts[-3]
-            finish_params["result_path"] = self.result_path
-
-            with open(self.finished_path, "wb") as f:
-                pickle.dump(finish_params, f)
+            finish_params["schedule_found"] = True
 
             self.schedule_plots(pdet)
+
+        with open(self.finished_path, "wb") as f:
+            pickle.dump(finish_params, f)
 
     def create_schedule(self, pdet, universe_dir, workers):
         schedule_path = Path(
@@ -757,11 +759,17 @@ class ImagingSchedule:
         axsc.set_ylim([0, nplans + 2])
         axsc.set_yticks(np.arange(0, nplans + 2, 1))
         tick_labels = [""]
+        total_success = 0
+        total_obs = 0
+        total_int_time = 0
         for pind, label in enumerate(planet_names.values()):
             if pind in self.targetdf.columns:
                 success = self.targetdf[pind]["success"]
                 fail = self.targetdf[pind]["fail"]
                 tick_labels.append(f"{success}/{success+fail}-{label}")
+                total_success += success
+                total_obs += success + fail
+                total_int_time += sum(self.targetdf[pind]["int_time"]).to(u.d).value
             else:
                 tick_labels.append(f"0/0 - {label}")
 
@@ -774,6 +782,8 @@ class ImagingSchedule:
 
         axsc.set_title(
             f"Observing schedule, "
+            f"{total_success}/{total_obs}, "
+            f"total int time {total_int_time} d, "
             f"RV sigma: {self.best_precision} m/s, "
             f"fEZ_q:{pdet.fEZ_quantile:.2f}"
         )
