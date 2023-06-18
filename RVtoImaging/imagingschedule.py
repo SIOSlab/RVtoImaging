@@ -744,6 +744,10 @@ class ImagingSchedule:
         return final_df
 
     def schedule_plots(self, pdet):
+        plt.style.use("dark_background")
+        font = {"size": 13}
+        plt.rc("font", **font)
+
         SS = pdet.SS
         SU = SS.SimulatedUniverse
         start_time_jd = SS.TimeKeeping.missionStart.jd
@@ -753,7 +757,7 @@ class ImagingSchedule:
             format="jd",
             scale="tai",
         )
-        figsc, axsc = plt.subplots(figsize=(10, 7))
+        figsc, axsc = plt.subplots(figsize=(11, 9 * 0.75))
 
         # Could do colorbars like the SPIE paper for the 1 day pdet values
         nplans = len(SU.plan2star)
@@ -789,7 +793,7 @@ class ImagingSchedule:
                 if success > 0:
                     self.unique_planets_detected += 1
             else:
-                tick_labels.append(f"0/0 - {label}")
+                tick_labels.append(f"{label}")
                 self.per_planet_data.append([0, 0])
 
         # tick_labels = list(planet_names.values())
@@ -800,12 +804,12 @@ class ImagingSchedule:
         axsc.set_xlabel("Time since mission start (d)")
 
         axsc.set_title(
-            f"Observing schedule, "
-            f"{self.unique_planets_detected} unique planets, "
+            f"ExoZodi quantile: {pdet.fEZ_quantile:.2f}, "
+            f"{self.unique_planets_detected}/{self.total_planets} detected, "
             f"{self.total_success}/{self.total_obs}, "
-            f"obs time {self.total_int_time} d, "
-            f"RV sigma: {self.best_precision} m/s, "
-            f"fEZ_q:{pdet.fEZ_quantile:.2f}"
+            f"{self.total_int_time} d"  # , "
+            # r"$\sigma_{RV}$"
+            # f"={self.best_precision} m/s"  # , "
         )
         for yval in range(nplans + 2):
             axsc.axhline(y=yval + 0.5, alpha=0.5, ls="--")
@@ -816,13 +820,16 @@ class ImagingSchedule:
         cmap = plt.get_cmap("viridis")
         # pdet_cbar_ax = figsc.add_axes()
         cbar_2 = figsc.colorbar(
-            mpl.cm.ScalarMappable(cmap=cmap), ax=axsc, alpha=0.5, location="right"
+            mpl.cm.ScalarMappable(cmap=cmap),
+            ax=axsc,
+            alpha=0.5,
+            location="right",
+            ticks=np.linspace(0, 1, 5),
         )
-        cbar_2.set_label(r"$P_{det}(t_{int}=$" + f"{pdet_int_time:.0f}d)")
-
+        cbar_2.set_label(r"$P_{det}(t_{int}=$" + f"{pdet_int_time:.0f}d)", fontsize=15)
         det_colors = {0: "red", 1: "lime", -1: "yellow", -2: "yellow"}
         det_colors_schedule = copy.deepcopy(det_colors)
-        det_colors_schedule[1] = "black"
+        det_colors_schedule[1] = "white"
         n_inds = 50
         plot_times = obs_times[::10]
         dt = 10 * self.block_length.to(u.d).value

@@ -190,7 +190,19 @@ class RVtoImaging:
                 "int_dMag",
                 "scaleWAdMag",
                 "popStars",
+                # "arange",
+                # "erange",
+                # "Irange",
+                # "Orange",
+                # "wrange",
+                # "prange",
+                # "Rprange",
+                # "Mprange",
+                # "scaleOrbits",
+                # "constrainOrbits",
+                # "eta",
             ]
+
             necessary_EXOSIMS_modules = [
                 "StarCatalog",
                 "PlanetPhysicalModel",
