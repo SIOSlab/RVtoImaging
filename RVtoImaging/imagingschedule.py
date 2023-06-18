@@ -76,6 +76,14 @@ class ImagingSchedule:
             f" for {universe_dir.parts[-1].replace('_', ' ')} "
         )
         self.create_schedule(pdet, universe_dir, workers)
+        self.total_success = 0
+        self.total_obs = 0
+        self.total_int_time = 0
+        self.total_planets = len(pdet.SS.SimulatedUniverse.plan2star)
+        self.planets_fitted = 0
+        self.unique_planets_detected = 0
+        self.per_planet_data = []
+        # self.per_planet_completeness = pdet.SS.Completeness.int_comp
 
         # This is just to pull all the finished stuff in one place to make
         # post-processing easier
@@ -89,6 +97,7 @@ class ImagingSchedule:
             self.finished_path.parent.mkdir()
         finish_params = copy.deepcopy(self.params)
         finish_params["best_precision"] = self.best_precision
+        finish_params["fEZ_quantile"] = pdet.fEZ_quantile
         finish_params["universe"] = self.result_path.parts[-3]
         finish_params["result_path"] = self.result_path
         # Add schedule to the SS module
@@ -127,6 +136,13 @@ class ImagingSchedule:
             finish_params["schedule_found"] = True
 
             self.schedule_plots(pdet)
+        finish_params["total_detections"] = self.total_success
+        finish_params["total_observations"] = self.total_obs
+        finish_params["total_int_time"] = self.total_int_time
+        finish_params["total_planets"] = self.total_planets
+        finish_params["planets_fitted"] = self.planets_fitted
+        finish_params["unique_planets_detected"] = self.unique_planets_detected
+        finish_params["per_planet_data"] = self.per_planet_data
 
         with open(self.finished_path, "wb") as f:
             pickle.dump(finish_params, f)
@@ -756,34 +772,38 @@ class ImagingSchedule:
                 pInd += 1
 
         # Planets get put at y=pInd+1
-        axsc.set_ylim([0, nplans + 2])
-        axsc.set_yticks(np.arange(0, nplans + 2, 1))
+        axsc.set_ylim([0, nplans + 1])
+        axsc.set_yticks(np.arange(0, nplans + 1, 1))
         tick_labels = [""]
-        total_success = 0
-        total_obs = 0
-        total_int_time = 0
         for pind, label in enumerate(planet_names.values()):
             if pind in self.targetdf.columns:
                 success = self.targetdf[pind]["success"]
                 fail = self.targetdf[pind]["fail"]
                 tick_labels.append(f"{success}/{success+fail}-{label}")
-                total_success += success
-                total_obs += success + fail
-                total_int_time += sum(self.targetdf[pind]["int_time"]).to(u.d).value
+                self.total_success += success
+                self.total_obs += success + fail
+                self.total_int_time += (
+                    sum(self.targetdf[pind]["int_time"]).to(u.d).value
+                )
+                self.per_planet_data.append([success, fail])
+                if success > 0:
+                    self.unique_planets_detected += 1
             else:
                 tick_labels.append(f"0/0 - {label}")
+                self.per_planet_data.append([success, fail])
 
         # tick_labels = list(planet_names.values())
         # tick_labels.insert(0, "")
-        tick_labels.append("")
+        # tick_labels.append("")
         axsc.set_yticklabels(tick_labels)
         axsc.set_xlim([0, end_time_jd - start_time_jd])
         axsc.set_xlabel("Time since mission start (d)")
 
         axsc.set_title(
             f"Observing schedule, "
-            f"{total_success}/{total_obs}, "
-            f"total int time {total_int_time} d, "
+            f"{self.unique_planets_detected} unique planets, "
+            f"{self.total_success}/{self.total_obs}, "
+            f"obs time {self.total_int_time} d, "
             f"RV sigma: {self.best_precision} m/s, "
             f"fEZ_q:{pdet.fEZ_quantile:.2f}"
         )
@@ -813,6 +833,7 @@ class ImagingSchedule:
 
             pops = pdet.pops[system_name]
             for pval, pop in enumerate(pops):
+                self.planets_fitted += 1
                 planet_pdet = system_pdets.pdet[pval]
                 pdet_vals = planet_pdet.interp(
                     time=obs_times.datetime, int_time=pdet_int_time
@@ -932,8 +953,8 @@ class ImagingSchedule:
                         fill=False,
                     )
                     axsc.add_patch(obs_sq)
-                    axsc.axvline(x=zeroed_time, alpha=0.25)
-                    axsc.axvline(x=zeroed_time + _tint, alpha=0.25, ls="--")
+                    # axsc.axvline(x=zeroed_time, alpha=0.25)
+                    # axsc.axvline(x=zeroed_time + _tint, alpha=0.25, ls="--")
 
                 fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.0e}"
                 intstr = intstr[:-2]
