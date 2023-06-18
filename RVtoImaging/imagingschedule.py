@@ -790,7 +790,7 @@ class ImagingSchedule:
                     self.unique_planets_detected += 1
             else:
                 tick_labels.append(f"0/0 - {label}")
-                self.per_planet_data.append([success, fail])
+                self.per_planet_data.append([0, 0])
 
         # tick_labels = list(planet_names.values())
         # tick_labels.insert(0, "")
