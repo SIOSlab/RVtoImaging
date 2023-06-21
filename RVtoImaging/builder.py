@@ -185,22 +185,23 @@ class RVtoImaging:
                 "fillPhotometry",
                 "filterBinaries",
                 "filter_for_char",
+                "guarantee_earths",
                 "earths_only",
                 "int_WA",
                 "int_dMag",
                 "scaleWAdMag",
                 "popStars",
-                # "arange",
-                # "erange",
-                # "Irange",
-                # "Orange",
-                # "wrange",
-                # "prange",
-                # "Rprange",
-                # "Mprange",
-                # "scaleOrbits",
-                # "constrainOrbits",
-                # "eta",
+                "arange",
+                "erange",
+                "Irange",
+                "Orange",
+                "wrange",
+                "prange",
+                "Rprange",
+                "Mprange",
+                "scaleOrbits",
+                "constrainOrbits",
+                "eta",
             ]
 
             necessary_EXOSIMS_modules = [
@@ -307,7 +308,7 @@ class RVtoImaging:
         # base_params = rv_dataset_params["base_params"]
         rv_dataset_params["universe_dir"] = self.universe_dir
         self.rv_dataset_params = rv_dataset_params
-        self.rvdataset = RVDataset(self.rv_dataset_params, self.universe)
+        self.rvdataset = RVDataset(self.rv_dataset_params, self.universe, self.workers)
         # for rv_observing_runs in rv_dataset_params["rv_observing_runs"]:
         #     # Create descriptive name for rv_dataset based on the input parameters
         #     rv_observing_run_params = rv_dataset_params.copy()

@@ -23,7 +23,7 @@ class RVObservingRun:
     observation times, rv precision terms, and constraints
     """
 
-    def __init__(self, run_params, universe):
+    def __init__(self, run_params, universe, workers):
         # Observing run name
         self.name = run_params["name"].replace(" ", "_").replace("/", "")
 
@@ -99,7 +99,7 @@ class RVObservingRun:
             self.observer = Observer.at_site(self.location, timezone=self.timezone)
 
             # Create observation schedule
-            self.create_observation_schedule()
+            self.create_observation_schedule(workers)
 
             # Simulate the observations
             self.make_observations(universe)
@@ -109,7 +109,7 @@ class RVObservingRun:
             with open(self.run_path, "wb") as f:
                 dill.dump(self, f)
 
-    def create_observation_schedule(self):
+    def create_observation_schedule(self, workers):
         """
         Creates an observation schedule according to the observation scheme set
         Adds all observation times to the self.target_df DataFrame
@@ -246,8 +246,32 @@ class RVObservingRun:
                             for slot in night_slots_dict[night]
                         )
 
-                # Objective function, simply maximize the number of observations
-                # made subject to the previous constraints
+                # maximize the number of targets with desired number of observations
+                n_requested_observations = self.obs_scheme["requested_observations"]
+                requested_observation_bools = []
+                for target in targets:
+                    _bool = model.NewBoolVar(
+                        (
+                            f"{target} has at least "
+                            f"{n_requested_observations} observations"
+                        )
+                    )
+                    target_bools = []
+                    for night in valid_nights:
+                        for slot in night_slots_dict[night]:
+                            target_bools.append(obs_assignments[(target, night, slot)])
+                    model.Add(
+                        sum(target_bools) >= n_requested_observations
+                    ).OnlyEnforceIf(_bool)
+                    model.Add(
+                        sum(target_bools) < n_requested_observations
+                    ).OnlyEnforceIf(_bool.Not())
+                    requested_observation_bools.append(_bool)
+
+                # Objective function, maximize the number of observations
+                # made subject to the previous constraints and the number
+                # of target stars that have at least the number of observations
+                # requested
                 model.Maximize(
                     sum(
                         obs_assignments[(target, night, slot)]
@@ -255,36 +279,45 @@ class RVObservingRun:
                         for night in valid_nights
                         for slot in night_slots_dict[night]
                     )
+                    + 100 * sum(requested_observation_bools)
                 )
 
                 logger.info(f"Creating optimal observation schedule for {self.name}")
                 solver = cp_model.CpSolver()
-                status = solver.Solve(model)
-                if status == cp_model.OPTIMAL:
-                    n_target_observations = []
-                    for target in targets:
-                        target_observations = []
-                        for night in valid_nights:
-                            for slot in night_slots_dict[night]:
-                                if (
-                                    solver.Value(obs_assignments[(target, night, slot)])
-                                    == 1
-                                ):
-                                    target_observations.append(times_jd[slot])
-                        n_target_observations.append(len(target_observations))
-                        all_observations.append(Time(target_observations, format="jd"))
-                    self.target_df["n_observations"] = n_target_observations
-                    self.target_df["observations"] = all_observations
+                solver.parameters.num_search_workers = workers
+                solver.parameters.log_search_progress = self.obs_scheme[
+                    "log_search_progress"
+                ]
+                solver.parameters.max_time_in_seconds = self.obs_scheme[
+                    "max_time_in_seconds"
+                ]
+                # status = solver.Solve(model)
+                # if status == cp_model.OPTIMAL:
+                n_target_observations = []
+                for target in targets:
+                    target_observations = []
+                    for night in valid_nights:
+                        for slot in night_slots_dict[night]:
+                            if (
+                                solver.Value(obs_assignments[(target, night, slot)])
+                                == 1
+                            ):
+                                target_observations.append(times_jd[slot])
+                    n_target_observations.append(len(target_observations))
+                    all_observations.append(Time(target_observations, format="jd"))
+                self.target_df["n_observations"] = n_target_observations
+                self.target_df["observations"] = all_observations
 
-                    targets_observed = sum((self.target_df.n_observations.values > 1))
-                    logger.info(
-                        f"Optimal schedule found, observing {targets_observed} "
-                        "stars at least once."
-                    )
-                else:
-                    raise RuntimeError(
-                        f"No optimal schedule possible for {self.name} observing run."
-                    )
+                targets_observed = sum((self.target_df.n_observations.values > 1))
+                logger.info(
+                    f"Optimal schedule found, observing {targets_observed} "
+                    "stars at least once."
+                )
+                # breakpoint()
+                # else:
+                #     raise RuntimeError(
+                #         f"No optimal schedule possible for {self.name} observing run."
+                #     )
             case "random":
                 # Calculate the number of observations per year, most years
                 # will have nobs observations, but this accounts for the first

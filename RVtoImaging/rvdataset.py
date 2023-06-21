@@ -22,7 +22,7 @@ class RVDataset:
         DataFrame with all observations
     """
 
-    def __init__(self, params, universe):
+    def __init__(self, params, universe, workers):
         """
         params (dict):
             Parameters used by the RVDataset module
@@ -47,7 +47,7 @@ class RVDataset:
             if using_preset_targets:
                 obs_run_params["target_df"] = target_df
             obs_run_params["universe_dir"] = params["universe_dir"]
-            _obs_run = RVObservingRun(obs_run_params, universe)
+            _obs_run = RVObservingRun(obs_run_params, universe, workers)
             obs_run_names.append(_obs_run.run_name)
             self.obs_runs.append(_obs_run)
 
