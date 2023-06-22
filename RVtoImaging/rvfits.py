@@ -170,7 +170,7 @@ class RVFits:
                         finish_str = "TBD"
                         rate_str = "TBD"
                     universe_str = (
-                        f"in universe {self.universe_number} of "
+                        f"for seed {self.universe_number} of "
                         f"{self.total_universes}. "
                     )
                 elif self.fits_completed > 0:
@@ -183,11 +183,11 @@ class RVFits:
                     )
                     finish_str = finish_time.strftime("%c")
                     rate_str = f"{rate/60:.2f} minutes per search"
-                    universe_str = "in universe 1 of 1. "
+                    universe_str = "for seed 1 of 1. "
                 else:
                     finish_str = "TBD"
                     rate_str = "TBD"
-                    universe_str = "in universe 1 of 1. "
+                    universe_str = "for seed 1 of 1. "
                 logger.info(
                     (
                         f"{star_name} has {rv_df.shape[0]} RV observations from "

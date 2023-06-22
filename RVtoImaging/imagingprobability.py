@@ -1062,6 +1062,8 @@ class PlanetPopulation:
         R = np.zeros(m.shape)
 
         inds = np.digitize(m, np.hstack((0, T, np.inf)))
+        # Catch, can't handle larger masses
+        inds[inds > 4] = 4
         for j in range(1, inds.max() + 1):
             R[inds == j] = 10.0 ** (C[j - 1] + np.log10(m[inds == j]) * S[j - 1])
 
