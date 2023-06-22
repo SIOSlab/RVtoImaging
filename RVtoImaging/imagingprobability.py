@@ -1,5 +1,7 @@
 import json
 import pickle
+import time
+from datetime import datetime
 from itertools import repeat
 from multiprocessing import Value
 from pathlib import Path
@@ -140,10 +142,28 @@ class ImagingProbability:
             for system, path in zip(orbitfit.systems_to_fit, orbitfit.paths)
         }
 
+        self.pdets_to_do = 0
+        self.pdets_finished = 0
+        # get the number of planets we need to calc pdet for for progress info
+        for system_path in orbitfit.paths:
+            chains_spec_path = Path(system_path, "spec.json")
+            chains_path = Path(system_path, "chains.csv.tar.bz2")
+            pdet_path = Path(system_path, f"pdet_{self.settings_hash}.p")
+            if pdet_path.exists():
+                continue
+            if chains_spec_path.exists() and chains_path.exists():
+                with open(chains_spec_path, "r") as f:
+                    chains_spec = json.loads(f.read())
+                if chains_spec["mcmc_converged"]:
+                    self.pdets_to_do += 1
+
+        start_time = time.time()
         # Loop through all the systems we want to calculate probability of
         # detection for
         # Check for the chains
-        for system_id, system_path in zip(orbitfit.systems_to_fit, orbitfit.paths):
+        for system_n, (system_id, system_path) in enumerate(
+            zip(orbitfit.systems_to_fit, orbitfit.paths)
+        ):
             system = universe.systems[system_id]
             if system.star.name.replace("_", " ") not in self.SS.TargetList.Name:
                 logger.warning(
@@ -164,7 +184,8 @@ class ImagingProbability:
                     chains_spec = json.loads(f.read())
                 if not chains_spec["mcmc_converged"]:
                     logger.warning(
-                        f"Skipping {universe.names[system_id]}, chains did not converge"
+                        f"Star {system_n} of {len(orbitfit.paths)}. "
+                        f"Skipping {universe.names[system_id]}, chains didn't converge."
                     )
                     continue
 
@@ -174,7 +195,8 @@ class ImagingProbability:
                     logger.info(
                         (
                             "Loading chains and search data for "
-                            f"{universe.names[system_id]}."
+                            f"{universe.names[system_id]}. "
+                            f"Star {system_n} of {len(orbitfit.paths)}."
                         )
                     )
                     chains = pd.read_csv(chains_path, compression="bz2")
@@ -199,9 +221,31 @@ class ImagingProbability:
                         columns=self.pdet_times,
                     )
                     system_pdets.index = self.int_times
+
+                    # Logging info
+                    runs_left = self.pdets_to_do - self.pdets_finished
+                    if self.pdets_finished > 0:
+                        current_time = time.time()
+                        elapsed_time = current_time - start_time
+                        rate = elapsed_time / self.pdets_finished
+                        finish_time = datetime.fromtimestamp(
+                            current_time + rate * runs_left
+                        )
+                        finish_str = finish_time.strftime("%c")
+                        rate_str = (
+                            f"{rate/60:.2f} minutes per "
+                            "probability of detection calculation"
+                        )
+                    else:
+                        finish_str = "TBD"
+                        rate_str = "Speed unknown"
                     logger.info(
-                        f"Calculating probability of detection for {system.star.name}"
+                        f"Star {system_n+1} of {len(orbitfit.paths)}. "
+                        f"Calculating probability of detection for {system.star.name}. "
+                        f"{rate_str}. "
+                        f"Estimated finish: {finish_str}."
                     )
+
                     input_error = False
                     # Adding progress bar
                     global pbar
@@ -243,6 +287,7 @@ class ImagingProbability:
                             workers=workers,
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
+                    self.pdets_finished += 1
                     pbar.close()
                     if input_error:
                         logger.warning(
@@ -271,8 +316,9 @@ class ImagingProbability:
                         pickle.dump(system_pops, f)
                 else:
                     logger.info(
+                        f"Star {system_n} of {len(orbitfit.paths)}. "
                         f"Probability of detection already exists for"
-                        f" {universe.systems[system_id].star.name}"
+                        f" {universe.systems[system_id].star.name}."
                     )
                     # pdet_xr_set = xr.load_dataset(
                     #     pdet_path, decode_cf=True, decode_times=True, engine="netcdf4"
@@ -301,7 +347,10 @@ class ImagingProbability:
                 # )
                 self.pdets[system.star.name] = pdet_xr_set
             else:
-                logger.warning(f"No chains were created for system {system_id}")
+                logger.warning(
+                    f"Star {system_n} of {len(orbitfit.paths)}. "
+                    f"No chains were created for system {system_id}. "
+                )
 
     def gen_dMag0s(self, SS, system, int_times):
         TL = SS.TargetList

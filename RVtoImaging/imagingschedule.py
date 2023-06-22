@@ -757,7 +757,7 @@ class ImagingSchedule:
             format="jd",
             scale="tai",
         )
-        figsc, axsc = plt.subplots(figsize=(11, 9 * 0.75))
+        figsc, axsc = plt.subplots(figsize=(11, 20))
 
         # Could do colorbars like the SPIE paper for the 1 day pdet values
         nplans = len(SU.plan2star)
@@ -812,21 +812,22 @@ class ImagingSchedule:
             # f"={self.best_precision} m/s"  # , "
         )
         for yval in range(nplans + 2):
-            axsc.axhline(y=yval + 0.5, alpha=0.5, ls="--")
+            axsc.axhline(y=yval + 0.5, ls="-", lw=0.25, zorder=1)
 
-        pdet_int_time = (
-            np.median(self.block_multiples) * self.block_length.to(u.d).value
-        )
+        # pdet_int_time = (
+        #     np.median(self.block_multiples) * self.block_length.to(u.d).value
+        # )
         cmap = plt.get_cmap("viridis")
-        # pdet_cbar_ax = figsc.add_axes()
-        cbar_2 = figsc.colorbar(
-            mpl.cm.ScalarMappable(cmap=cmap),
-            ax=axsc,
-            alpha=0.5,
-            location="right",
-            ticks=np.linspace(0, 1, 5),
-        )
-        cbar_2.set_label(r"$P_{det}(t_{int}=$" + f"{pdet_int_time:.0f}d)", fontsize=15)
+        # cbar_2 = figsc.colorbar(
+        #     mpl.cm.ScalarMappable(cmap=cmap),
+        #     ax=axsc,
+        #     alpha=0.5,
+        #     location="right",
+        #     ticks=np.linspace(0, 1, 5),
+        # )
+        # cbar_2.set_label(
+        #     r"$P_{det}(t_{int}=$", fontsize=15
+        # )  # + f"{pdet_int_time:.0f}d)", fontsize=15)
         det_colors = {0: "red", 1: "lime", -1: "yellow", -2: "yellow"}
         det_colors_schedule = copy.deepcopy(det_colors)
         det_colors_schedule[1] = "white"
@@ -843,8 +844,13 @@ class ImagingSchedule:
                 self.planets_fitted += 1
                 planet_pdet = system_pdets.pdet[pval]
                 pdet_vals = planet_pdet.interp(
-                    time=obs_times.datetime, int_time=pdet_int_time
+                    time=obs_times.datetime,
+                    int_time=np.array(self.block_multiples)
+                    * self.block_length.to(u.d).value,
                 ).values
+
+                alphas = np.ones(pdet_vals.shape) * 0.5
+                alphas[pdet_vals >= self.planet_threshold] = 0.75
 
                 # Have to find the right pInd to plot on since it's not
                 # in the same order
@@ -854,25 +860,23 @@ class ImagingSchedule:
                 pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
                 extent = 0, end_time_jd - start_time_jd, pInd + 0.5, pInd + 1.5
                 axsc.imshow(
-                    np.expand_dims(pdet_vals, axis=1).T,
+                    pdet_vals,
                     aspect="auto",
                     interpolation="none",
                     extent=extent,
                     cmap=cmap,
                     norm=mpl.colors.Normalize(0, 1),
-                    alpha=0.5,
+                    alpha=alphas,
                     zorder=0,
                 )
                 if system_name not in self.schedule.star.values:
                     continue
-                fig, (ax_WA, ax_dMag) = plt.subplots(figsize=(10, 5), ncols=2)
+                fig, (ax_WA, ax_dMag) = plt.subplots(figsize=(11, 5), ncols=2)
                 # sInd = np.where(SS.TargetList.Name == system_name)[0][0]
                 # pInds = np.where(SU.plan2star == sInd)[0]
                 # pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
                 if pInd not in self.targetdf.columns:
                     continue
-                # if pInd == 22:
-                #     breakpoint()
                 if sInd in used_sInds:
                     # If this isn't here then things get messed up for
                     # multiple-planet systems fitted and observed
@@ -914,8 +918,12 @@ class ImagingSchedule:
                         label=f"{j}",
                         alpha=0.25,
                     )
-                ax_dMag.plot(plot_times.jd - plot_times[0].jd, edMags, color="k")
-                ax_WA.plot(plot_times.jd - plot_times[0].jd, eWAs, color="k")
+                ax_dMag.plot(
+                    plot_times.jd - plot_times[0].jd, edMags, color="white", lw=0.75
+                )
+                ax_WA.plot(
+                    plot_times.jd - plot_times[0].jd, eWAs, color="white", lw=0.75
+                )
 
                 ax_dMag.set_ylim([15, 35])
                 ax_WA.set_ylim([0, 0.3])
@@ -952,7 +960,7 @@ class ImagingSchedule:
                         (zeroed_time, pInd + 0.5),
                         width=_tint,
                         height=1,
-                        zorder=1,
+                        zorder=2,
                         # color="white",
                         edgecolor=det_colors_schedule[_det_status],
                         hatch=r"\\",
@@ -963,7 +971,7 @@ class ImagingSchedule:
                     # axsc.axvline(x=zeroed_time, alpha=0.25)
                     # axsc.axvline(x=zeroed_time + _tint, alpha=0.25, ls="--")
 
-                fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.0e}"
+                # fEZstr = f"{self.targetdf[pInd]['fEZ'][nobs].value:.0e}"
                 intstr = intstr[:-2]
                 SNRstr = SNRstr[:-2]
 
@@ -974,10 +982,11 @@ class ImagingSchedule:
                 fig.suptitle(
                     f"{system_name}, "
                     f"RV precision: {self.best_precision} m/s, "
-                    f"int time: [{intstr}] d, "
-                    f"SNRs: [{SNRstr}], "
-                    f"fEZ: {fEZstr}"
+                    # f"int time: [{intstr}] d, "
+                    f"SNRs: [{SNRstr}]"
+                    # f"fEZ: {fEZstr}"
                 )
+                fig.tight_layout()
                 fig.savefig(fig_path, dpi=300)
         figsc_path1 = Path(f"{self.result_path}/full_schedule.png")
         figsc_path2 = Path(f"{self.finished_path}ng")
