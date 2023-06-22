@@ -291,7 +291,7 @@ class RVObservingRun:
                 solver.parameters.max_time_in_seconds = self.obs_scheme[
                     "max_time_in_seconds"
                 ]
-                # status = solver.Solve(model)
+                solver.Solve(model)
                 # if status == cp_model.OPTIMAL:
                 n_target_observations = []
                 for target in targets:
