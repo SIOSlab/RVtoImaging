@@ -76,6 +76,23 @@ class ImagingSchedule:
             f" for {universe_dir.parts[-1].replace('_', ' ')} "
         )
         self.create_schedule(pdet, universe_dir, workers)
+        #
+        intervals = pd.arrays.IntervalArray.from_tuples(
+            tuple(
+                zip(
+                    self.schedule.time_jd.values,
+                    (self.schedule.time_jd + self.schedule.int_time_d).values,
+                )
+            )
+        )
+        if np.any(
+            [
+                np.sum(intervals.overlaps(intervals[i])) - 1
+                for i in range(len(intervals))
+            ]
+        ):
+            logger.warn("Schedule did not respect overlap constraint")
+            breakpoint()
         self.total_success = 0
         self.total_obs = 0
         self.total_int_time = 0
@@ -111,12 +128,15 @@ class ImagingSchedule:
             target_info_path = Path(self.result_path, "per_target.p")
             flat_info_path = Path(self.result_path, "flat_info.p")
             summary_info_path = Path(self.result_path, "summary.p")
+            random_walk_path = Path(self.result_path, "random_walk.p")
             if not target_info_path.exists():
                 (
                     self.targetdf,
                     self.flatdf,
                     self.summary_stats,
                 ) = pdet.SS.sim_fixed_schedule(self.schedule)
+
+                self.random_walk_res = pdet.SS.random_walk_sim(300, self.sim_length)
                 self.summary_stats["fitted_planets"] = sum(
                     [len(pdet.pops[key]) for key in pdet.pops.keys()]
                 )
@@ -126,6 +146,8 @@ class ImagingSchedule:
                     pickle.dump(self.flatdf, f)
                 with open(summary_info_path, "wb") as f:
                     pickle.dump(self.summary_stats, f)
+                with open(random_walk_path, "wb") as f:
+                    pickle.dump(self.random_walk_res, f)
             else:
                 with open(target_info_path, "rb") as f:
                     self.targetdf = pickle.load(f)
@@ -133,6 +155,8 @@ class ImagingSchedule:
                     self.flatdf = pickle.load(f)
                 with open(summary_info_path, "rb") as f:
                     self.summary_stats = pickle.load(f)
+                with open(random_walk_path, "rb") as f:
+                    self.random_walk_res = pickle.load(f)
             finish_params["schedule_found"] = True
 
             self.schedule_plots(pdet)
@@ -748,6 +772,43 @@ class ImagingSchedule:
         font = {"size": 13}
         plt.rc("font", **font)
 
+        # Create histograms
+        histfig, histaxes = plt.subplots(ncols=2, nrows=3, figsize=(8, 12))
+        ax_names = [
+            "unique_planets_detected",
+            "one_detection",
+            "two_detections",
+            "three_plus_detections",
+            "n_observations",
+            "int_time",
+        ]
+        titles = [
+            "Unique planets detected",
+            "Planets with one detection",
+            "Planets with two detections",
+            "Planets with three+ detections",
+            "Number of observations",
+            "Summed integration time (d)",
+        ]
+        bin_iters = [1, 1, 1, 1, 2, 2]
+        for ax, category, title, bin_iter in zip(
+            histaxes.flatten(), ax_names, titles, bin_iters
+        ):
+            catvals = self.random_walk_res[category].values
+            schval = self.summary_stats[category]
+            bin_min = np.floor(catvals.min()) - 0.5
+            bin_max = np.ceil(catvals.max()) + 0.5
+            catbins = np.arange(bin_min, bin_max, bin_iter)
+            ax.hist(catvals, bins=catbins, density=True)
+            ax.axvline(schval, ls="--")
+            ax.set_title(title)
+
+        hist_path = Path(f"{self.result_path}/random_walk_comp.png")
+        hist_path2 = Path(f"{str(self.finished_path)[:-2]}_comp.png")
+        histfig.tight_layout()
+        histfig.savefig(hist_path, dpi=300)
+        histfig.savefig(hist_path2, dpi=300)
+
         SS = pdet.SS
         SU = SS.SimulatedUniverse
         start_time_jd = SS.TimeKeeping.missionStart.jd
@@ -779,6 +840,7 @@ class ImagingSchedule:
         axsc.set_ylim([0, nplans + 1])
         axsc.set_yticks(np.arange(0, nplans + 1, 1))
         tick_labels = [""]
+        self.total_int_time = self.flatdf.int_time.sum() * u.d
         for pind, label in enumerate(planet_names.values()):
             if pind in self.targetdf.columns:
                 success = self.targetdf[pind]["success"]
@@ -786,9 +848,6 @@ class ImagingSchedule:
                 tick_labels.append(f"{success}/{success+fail}-{label}")
                 self.total_success += success
                 self.total_obs += success + fail
-                self.total_int_time += (
-                    sum(self.targetdf[pind]["int_time"]).to(u.d).value
-                )
                 self.per_planet_data.append([success, fail])
                 if success > 0:
                     self.unique_planets_detected += 1
