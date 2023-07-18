@@ -54,19 +54,66 @@ class ImagingSchedule:
             params["rv_dataset"][name] = simple_run_spec
 
         params["rv_dataset_name"] = rv_dataset_params["dataset_name"]
+        necessary_param_names = [
+            "coeff_multiple",
+            "sim_length",
+            "block_length",
+            "block_multiples",
+            "max_observations_per_star",
+            "planet_threshold",
+            "requested_planet_observations",
+            "min_required_wait_time",
+            "max_required_wait_time",
+            "max_time_in_seconds",
+        ]
         self.params = params
-        self.coeff_multiple = params["coeff_multiple"]
-        self.sim_length = params["sim_length"]
-        self.block_length = params["block_length"]
-        self.block_multiples = params["block_multiples"]
-        self.max_observations_per_star = params["max_observations_per_star"]
-        self.planet_threshold = params["planet_threshold"]
-        self.requested_planet_observations = params["requested_planet_observations"]
-        self.min_required_wait_time = params["min_required_wait_time"]
-        self.max_required_wait_time = params["max_required_wait_time"]
-        self.log_search_progress = params["log_search_progress"]
-        self.max_time_in_seconds = params["max_time_in_seconds"]
-        self.hash = genHexStr(dictToSortedStr(params))
+        necessary_params = {}
+        for _param in necessary_param_names:
+            assert (
+                _param in params.keys()
+            ), f"Scheduler parameters does not have {_param} parameter"
+            setattr(self, _param, params[_param])
+            necessary_params[_param] = params[_param]
+        # self.coeff_multiple = params["coeff_multiple"]
+        # self.sim_length = params["sim_length"]
+        # self.block_length = params["block_length"]
+        # self.block_multiples = params["block_multiples"]
+        # self.max_observations_per_star = params["max_observations_per_star"]
+        # self.planet_threshold = params["planet_threshold"]
+        # self.requested_planet_observations = params["requested_planet_observations"]
+        # self.min_required_wait_time = params["min_required_wait_time"]
+        # self.max_required_wait_time = params["max_required_wait_time"]
+        # self.max_time_in_seconds = params["max_time_in_seconds"]
+
+        opt_params = params.get("opt")
+        opt_param_defaults = {
+            "log_search_progress": True,
+            "random_walk_method": "25dMag",
+            "n_random_walks": 300,
+        }
+        if opt_params is not None:
+            for _param, _val in opt_param_defaults.items():
+                if _param in opt_params.keys():
+                    setattr(self, _param, opt_params[_param])
+                else:
+                    setattr(self, _param, _val)
+                    logger.info(
+                        (
+                            "Setting optional scheduler parameter "
+                            f"{_param} to default of {_val}"
+                        )
+                    )
+        else:
+            # Default values
+            for _param, _val in opt_param_defaults.items():
+                setattr(self, _param, _val)
+                logger.info(
+                    (
+                        "Setting optional scheduler parameter "
+                        f"{_param} to default of {_val}"
+                    )
+                )
+        self.hash = genHexStr(dictToSortedStr(necessary_params))
 
         self.result_path = Path(universe_dir, "results", f"schedule_{self.hash}")
         self.result_path.mkdir(parents=True, exist_ok=True)
@@ -76,7 +123,7 @@ class ImagingSchedule:
             f" for {universe_dir.parts[-1].replace('_', ' ')} "
         )
         self.create_schedule(pdet, universe_dir, workers)
-        #
+
         intervals = pd.arrays.IntervalArray.from_tuples(
             tuple(
                 zip(
@@ -128,7 +175,6 @@ class ImagingSchedule:
             target_info_path = Path(self.result_path, "per_target.p")
             flat_info_path = Path(self.result_path, "flat_info.p")
             summary_info_path = Path(self.result_path, "summary.p")
-            random_walk_path = Path(self.result_path, "random_walk.p")
             if not target_info_path.exists():
                 (
                     self.targetdf,
@@ -136,7 +182,6 @@ class ImagingSchedule:
                     self.summary_stats,
                 ) = pdet.SS.sim_fixed_schedule(self.schedule)
 
-                self.random_walk_res = pdet.SS.random_walk_sim(300, self.sim_length)
                 self.summary_stats["fitted_planets"] = sum(
                     [len(pdet.pops[key]) for key in pdet.pops.keys()]
                 )
@@ -146,8 +191,6 @@ class ImagingSchedule:
                     pickle.dump(self.flatdf, f)
                 with open(summary_info_path, "wb") as f:
                     pickle.dump(self.summary_stats, f)
-                with open(random_walk_path, "wb") as f:
-                    pickle.dump(self.random_walk_res, f)
             else:
                 with open(target_info_path, "rb") as f:
                     self.targetdf = pickle.load(f)
@@ -155,8 +198,26 @@ class ImagingSchedule:
                     self.flatdf = pickle.load(f)
                 with open(summary_info_path, "rb") as f:
                     self.summary_stats = pickle.load(f)
+            int_times = self.block_multiples * self.block_length
+            random_walk_path = Path(
+                self.result_path,
+                f"random_walk_{self.random_walk_method}_{self.n_random_walks}.p",
+            )
+            if random_walk_path.exists():
                 with open(random_walk_path, "rb") as f:
                     self.random_walk_res = pickle.load(f)
+            else:
+                if self.random_walk_method == "25dMag":
+                    self.random_walk_res = pdet.SS.random_walk_sim(
+                        self.n_random_walks, self.sim_length
+                    )
+                else:
+                    self.random_walk_res = pdet.SS.random_walk_sim(
+                        self.n_random_walks, self.sim_length, int_times=int_times
+                    )
+                with open(random_walk_path, "wb") as f:
+                    pickle.dump(self.random_walk_res, f)
+
             finish_params["schedule_found"] = True
 
             self.schedule_plots(pdet)
@@ -839,7 +900,9 @@ class ImagingSchedule:
         # Planets get put at y=pInd+1
         axsc.set_ylim([0, nplans + 1])
         axsc.set_yticks(np.arange(0, nplans + 1, 1))
+
         tick_labels = [""]
+        blank_tick_labels = [""]
         self.total_int_time = self.flatdf.int_time.sum() * u.d
         for pind, label in enumerate(planet_names.values()):
             if pind in self.targetdf.columns:
@@ -854,6 +917,7 @@ class ImagingSchedule:
             else:
                 tick_labels.append(f"{label}")
                 self.per_planet_data.append([0, 0])
+            blank_tick_labels.append(label)
 
         # tick_labels = list(planet_names.values())
         # tick_labels.insert(0, "")
@@ -866,7 +930,7 @@ class ImagingSchedule:
             f"ExoZodi quantile: {pdet.fEZ_quantile:.2f}, "
             f"{self.unique_planets_detected}/{self.total_planets} detected, "
             f"{self.total_success}/{self.total_obs}, "
-            f"{self.total_int_time} d"  # , "
+            f"{self.total_int_time}"  # , "
             # r"$\sigma_{RV}$"
             # f"={self.best_precision} m/s"  # , "
         )
@@ -877,6 +941,21 @@ class ImagingSchedule:
         #     np.median(self.block_multiples) * self.block_length.to(u.d).value
         # )
         cmap = plt.get_cmap("viridis")
+        # figsc2, axsc2 = plt.subplots(figsize=(11, 20))
+        # axsc2.set_ylim([0, nplans + 1])
+        # axsc2.set_yticks(np.arange(0, nplans + 1, 1))
+        # axsc2.set_yticklabels(tick_labels)
+        # axsc2.set_xlim([0, end_time_jd - start_time_jd])
+        # axsc2.set_xlabel("Time since mission start (d)")
+
+        # axsc2.set_title(
+        #     f"ExoZodi quantile: {pdet.fEZ_quantile:.2f}, "
+        #     f"{self.unique_planets_detected}/{self.total_planets} detected, "
+        #     f"{self.total_success}/{self.total_obs}, "
+        #     f"{self.total_int_time} d"  # , "
+        #     # r"$\sigma_{RV}$"
+        #     # f"={self.best_precision} m/s"  # , "
+        # )
         # cbar_2 = figsc.colorbar(
         #     mpl.cm.ScalarMappable(cmap=cmap),
         #     ax=axsc,
@@ -928,6 +1007,16 @@ class ImagingSchedule:
                     alpha=alphas,
                     zorder=0,
                 )
+                # axsc2.imshow(
+                #     pdet_vals,
+                #     aspect="auto",
+                #     interpolation="none",
+                #     extent=extent,
+                #     cmap=cmap,
+                #     norm=mpl.colors.Normalize(0, 1),
+                #     alpha=alphas,
+                #     zorder=0,
+                # )
                 if system_name not in self.schedule.star.values:
                     continue
                 fig, (ax_WA, ax_dMag) = plt.subplots(figsize=(11, 5), ncols=2)
@@ -1048,7 +1137,11 @@ class ImagingSchedule:
                 fig.tight_layout()
                 fig.savefig(fig_path, dpi=300)
         figsc_path1 = Path(f"{self.result_path}/full_schedule.png")
-        figsc_path2 = Path(f"{self.finished_path}ng")
+        # figsc_path2 = Path(f"{self.finished_path}ng")
         figsc.tight_layout()
         figsc.savefig(figsc_path1, dpi=300)
-        figsc.savefig(figsc_path2, dpi=300)
+        # figsc.savefig(figsc_path2, dpi=300)
+
+        # figsc2_path1 = Path("dissertation_plots/pdettradespace.png")
+        # figsc2.tight_layout()
+        # figsc2.savefig(figsc2_path1, dpi=300)

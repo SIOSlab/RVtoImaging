@@ -12,6 +12,7 @@ import pandas as pd
 from keplertools import fun as kt
 from tqdm import tqdm
 
+from EXOSIMS.util.phaseFunctions import realSolarSystemPhaseFunc
 from EXOSIMS.util.utils import dictToSortedStr, genHexStr
 from RVtoImaging.logger import logger
 
@@ -160,7 +161,7 @@ def calc_position_vectors2(obj, times):
     return full_vector
 
 
-def prop_for_imaging(obj, t):
+def prop_for_imaging_lambert(obj, t):
     # Calculates the working angle and deltaMag
     a, e, inc, w = obj.a, obj.e, obj.inc, obj.w
 
@@ -187,6 +188,30 @@ def prop_for_imaging(obj, t):
 
     WA = np.arctan(s / obj.dist).decompose()
     dMag = -2.5 * np.log10(p_phi * ((obj.radius / r).decompose()) ** 2).value
+    return WA, dMag
+
+
+def prop_for_imaging(obj, t):
+    # Calculates the working angle and deltaMag
+    a, e, inc, w = obj.a, obj.e, obj.inc, obj.w
+    if obj.circular:
+        theta = mean_anom(obj, t)
+        # theta = (math.tau * (phase - np.floor(phase))) * u.rad
+        r = a
+    else:
+        M = mean_anom(obj, t)
+        E = kt.eccanom(M.value, e)
+        nu = kt.trueanom(E, e) * u.rad
+        theta = nu + w
+        r = a * (1 - e**2) / (1 + e * np.cos(nu))
+
+    s = r * np.sqrt(1 - np.sin(inc) ** 2 * np.sin(theta) ** 2)
+    beta = np.arccos(-np.sin(inc) * np.sin(theta))
+    phi = realSolarSystemPhaseFunc(beta, obj.phiIndex)
+
+    WA = np.arctan(s / obj.dist_to_star).decompose()
+    dMag = -2.5 * np.log10(obj.p * phi * ((obj.Rp / r).decompose()) ** 2).value
+
     return WA, dMag
 
 
@@ -291,7 +316,7 @@ def prev_best_fit(dir, survey_name):
             other_spec_prev_max,
             other_spec_fitting_done,
             other_spec_search_file,
-        ) = check_orbitfit_dir(other_spec_dir)
+        ) = check_orbitfit_dir(other_spec_dir, None)
         if condition_1 and condition_2 and other_spec_has_fit:
             if best_inst_precision == best_candidate["precision"]:
                 # Choose candidate with better baseline in sitations where
@@ -404,7 +429,7 @@ def replace_EXOSIMS_system(SS, sInd, system):
     return SS
 
 
-def check_orbitfit_dir(dir):
+def check_orbitfit_dir(dir, fit_dir):
     dir_list = list(Path(dir).glob("*"))
     prev_run_dirs = [folder for folder in dir_list if folder.is_dir()]
     search_exists = [Path(folder, "search.pkl").exists() for folder in prev_run_dirs]
@@ -412,9 +437,19 @@ def check_orbitfit_dir(dir):
     search_file = None
     # Must have the same or fewer max_planets
     if sum(search_exists) == 0:
-        # No attempts at orbit fitting for this system
-        prev_max = 0
-        fitting_done = False
+        # Check to see if there was already an attempt that failed
+        prev_attempt_spec = Path(fit_dir, "spec.json")
+        if prev_attempt_spec.exists():
+            has_fit = True
+            with open(prev_attempt_spec, "r") as f:
+                run_info = json.load(f)
+            if not run_info["mcmc_success"]:
+                prev_max = 0
+                fitting_done = True
+        else:
+            # No attempts at orbit fitting for this system
+            prev_max = 0
+            fitting_done = False
     else:
         # Has a previous attempt to do orbit fitting
         prev_max = 0

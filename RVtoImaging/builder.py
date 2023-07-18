@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -119,30 +118,33 @@ class BaseBuilder(Builder):
         self.build_img_pdet()
         self.build_img_schedule()
 
-    def run_seeds(self):
+    def run_sim(self, seed):
         # Used for time estimation
-        self.rv_fits_params["initial_start_time"] = time.time()
-        self.rv_fits_params["total_searches"] = (
-            len(self.seeds) * self.rv_dataset_params["approx_systems_to_observe"]
-        )
-        self.rv_fits_params["completed_searches"] = 0
-        self.rv_fits_params["loaded_searches"] = 0
-        self.rv_fits_params["total_universes"] = len(self.seeds)
+        # self.rv_fits_params["initial_start_time"] = time.time()
+        # self.rv_fits_params["total_searches"] = (
+        #     len(self.seeds) * self.rv_dataset_params["approx_systems_to_observe"]
+        # )
+        # self.rv_fits_params["completed_searches"] = 0
+        # self.rv_fits_params["loaded_searches"] = 0
+        # self.rv_fits_params["total_universes"] = len(self.seeds)
 
-        for seed_ind, seed in enumerate(self.seeds):
-            self.universe_params["forced_seed"] = int(seed)
-            self.rv_fits_params["universe_number"] = seed_ind + 1
+        # for seed_ind, seed in enumerate(self.seeds):
+        self.universe_params["forced_seed"] = int(seed)
+        # self.rv_fits_params["universe_number"] = seed_ind + 1
 
-            if hasattr(self, "pdet_params"):
-                self.pdet_params["forced_seed"] = int(seed)
-                self.build_to_img_schedule()
-            else:
-                self.build_to_fits()
-            self.rv_fits_params[
-                "completed_searches"
-            ] += self.rv2img.orbitfit.fits_completed
-            self.rv_fits_params["loaded_searches"] += self.rv2img.orbitfit.fits_loaded
-            logger.info("Simulation complete\n")
+        self.build_universe()
+        if hasattr(self, "rv_fits_params"):
+            self.build_rv_dataset()
+        if hasattr(self, "rv_fits_params"):
+            self.build_rv_fits()
+        if hasattr(self, "pdet_params"):
+            self.pdet_params["forced_seed"] = int(seed)
+            self.build_img_pdet()
+        if hasattr(self, "img_schedule_params"):
+            self.build_img_schedule()
+        # self.rv_fits_params["completed_searches"]+=self.rv2img.orbitfit.fits_completed
+        # self.rv_fits_params["loaded_searches"] += self.rv2img.orbitfit.fits_loaded
+        logger.info("Simulation complete\n")
 
 
 class RVtoImaging:
@@ -202,6 +204,7 @@ class RVtoImaging:
                 "scaleOrbits",
                 "constrainOrbits",
                 "eta",
+                "catalogpath",
             ]
 
             necessary_EXOSIMS_modules = [

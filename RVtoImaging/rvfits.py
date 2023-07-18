@@ -81,7 +81,7 @@ class RVFits:
 
             # Check the folder for previous fits
             has_fit, prev_max, fitting_done, _ = utils.check_orbitfit_dir(
-                rvdataset_path
+                rvdataset_path, fit_dir
             )
             # best_candidate_fit = utils.prev_best_fit(system_path, rvdataset.name)
 

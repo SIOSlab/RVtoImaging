@@ -49,7 +49,7 @@ def dim_dMag_obj(fZ, int_times, WAs, fEZs, TL, sInd):
             dim_dMag_arr[i, j] = OS.calc_dMag_per_intTime(
                 _int_time,
                 TL,
-                sInd,
+                np.array([sInd]),
                 fZ,
                 _fEZs[j],
                 _WA,
@@ -518,8 +518,11 @@ class ImagingProbability:
 
     def gen_WAs(self):
         OS = self.SS.TargetList.OpticalSystem
-        IWA = OS.IWA
-        OWA = OS.OWA
+        mode = list(
+            filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+        )[0]
+        IWA = mode["IWA"]
+        OWA = mode["OWA"]
         WAs = np.logspace(0, np.log10(OWA / IWA).value, 10) * IWA
         return WAs
 
@@ -992,7 +995,6 @@ class PlanetPopulation:
                 break
             else:
                 if len(worth_checking_inds) > 0:
-
                     visible_for_int_time = (
                         dim_dMag_interps[fZ_key](WA[worth_checking_inds], int_time)
                     ) > dMag[worth_checking_inds]
@@ -1022,7 +1024,6 @@ class PlanetPopulation:
         return df.drop(columns=self.droppable_cols)
 
     def calc_radius_from_mass(self, Mp):
-
         """
         Calculate planet radius from mass, stolen from EXOSIMS
 
