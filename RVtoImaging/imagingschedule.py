@@ -974,6 +974,9 @@ class ImagingSchedule:
         dt = 10 * self.block_length.to(u.d).value
         SS.reset_sim(genNewPlanets=False)
         used_sInds = []
+        ####
+        thresh_arr = np.zeros((nplans, len(self.block_multiples)))
+        ####
         for system_name in tqdm(pdet.pops.keys(), desc="Generating plots"):
             system_pdets = pdet.pdets[system_name]
 
@@ -1007,6 +1010,12 @@ class ImagingSchedule:
                     alpha=alphas,
                     zorder=0,
                 )
+                ####
+                for _blockn, _ in enumerate(self.block_multiples):
+                    thresh_arr[pInd, _blockn] = sum(
+                        pdet_vals[_blockn, :] > self.planet_threshold
+                    )
+                ####
                 # axsc2.imshow(
                 #     pdet_vals,
                 #     aspect="auto",
@@ -1136,6 +1145,11 @@ class ImagingSchedule:
                 )
                 fig.tight_layout()
                 fig.savefig(fig_path, dpi=300)
+        ####
+        threshdf = pd.DataFrame(thresh_arr, columns=self.block_multiples)
+        breakpoint()
+        threshdf
+        ####
         figsc_path1 = Path(f"{self.result_path}/full_schedule.png")
         # figsc_path2 = Path(f"{self.finished_path}ng")
         figsc.tight_layout()
