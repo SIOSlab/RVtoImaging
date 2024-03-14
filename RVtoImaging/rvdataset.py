@@ -124,55 +124,59 @@ class RVDataset:
         and programmed for the NETS list specifically
         """
         Simbad.add_votable_fields("ids")
+        # if "HIP" not in tldf.columns:
+        # Get the HIP ids and resave the target list
+        hip_ids = []
+        in_universe = []
+        universe_ids = []
+        coords = []
+        targets = []
+
         if "HIP" not in tldf.columns:
-            # Get the HIP ids and resave the target list
-            hip_ids = []
-            in_universe = []
-            universe_ids = []
-            coords = []
-            targets = []
-
-            for name in tldf.name:
-                query = Simbad.query_object(name)
-                all_ids = query["IDS"][0].split("|")
-                coord = SkyCoord(
-                    ra=query["RA"].data.data,
-                    dec=query["DEC"].data.data,
-                    unit=(u.hourangle, u.deg, u.arcsec),
-                )
-                coords.append(coord)
-                if "HIP" in query["IDS"][0]:
-                    simbad_hip_value = [id for id in all_ids if "HIP" in id][0]
-                    # Doing string surgery to match convention of a single
-                    # space between HIP and the number
-                    sp = simbad_hip_value.split()
-                    hip_id = f"{sp[0]} {sp[1]}"
-                    hip_ids.append(hip_id)
-                    in_universe_val = hip_id in universe.names
-                    in_universe.append(in_universe_val)
-                    if in_universe_val:
-                        universe_ids.append(
-                            np.where(np.array(universe.names) == hip_id)[0][0]
-                        )
-                    else:
-                        universe_ids.append(None)
-                    targets.append(FixedTarget(coord=coord, name=hip_id))
+            column = "name"
+        else:
+            column = "HIP"
+        for name in tldf[column]:
+            query = Simbad.query_object(name)
+            all_ids = query["IDS"][0].split("|")
+            coord = SkyCoord(
+                ra=query["RA"].data.data,
+                dec=query["DEC"].data.data,
+                unit=(u.hourangle, u.deg, u.arcsec),
+            )
+            coords.append(coord)
+            if "HIP" in query["IDS"][0]:
+                simbad_hip_value = [id for id in all_ids if "HIP" in id][0]
+                # Doing string surgery to match convention of a single
+                # space between HIP and the number
+                sp = simbad_hip_value.split()
+                hip_id = f"{sp[0]} {sp[1]}"
+                hip_ids.append(hip_id)
+                in_universe_val = hip_id in universe.names
+                in_universe.append(in_universe_val)
+                if in_universe_val:
+                    universe_ids.append(
+                        np.where(np.array(universe.names) == hip_id)[0][0]
+                    )
                 else:
-                    hip_ids.append(None)
-                    in_universe.append(False)
                     universe_ids.append(None)
-                    targets.append(None)
-                # dist = query["Distance_distance"].data.data * u.pc
-                # print(simbad_list['RA'].data.data)
+                targets.append(FixedTarget(coord=coord, name=hip_id))
+            else:
+                hip_ids.append(None)
+                in_universe.append(False)
+                universe_ids.append(None)
+                targets.append(None)
+            # dist = query["Distance_distance"].data.data * u.pc
+            # print(simbad_list['RA'].data.data)
 
-            tldf["coordinate"] = coords
-            tldf["target"] = targets
-            tldf["HIP"] = hip_ids
-            tldf["in_universe"] = in_universe
-            tldf["universe_id"] = universe_ids
-            target_df = tldf.loc[tldf.in_universe].reset_index(drop=True)
-            # systems_to_observe = target_df.universe_id.astype(int).tolist()
-            return target_df
+        tldf["coordinate"] = coords
+        tldf["target"] = targets
+        tldf["HIP"] = hip_ids
+        tldf["in_universe"] = in_universe
+        tldf["universe_id"] = universe_ids
+        target_df = tldf.loc[tldf.in_universe].reset_index(drop=True)
+        # systems_to_observe = target_df.universe_id.astype(int).tolist()
+        return target_df
 
     def choose_systems(self, universe):
         Simbad.add_votable_fields("ids")

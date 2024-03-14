@@ -169,7 +169,7 @@ class RVObservingRun:
         all_observations = []
         logger.info(f"Creating observation times for {self.name} targets")
         # Create the observation schedule
-        match (self.obs_scheme["type"]):
+        match self.obs_scheme["type"]:
             case "constraint":
                 # Set up which nights are available for observing
                 obs_nights = self.schedule_observing_nights()
@@ -230,6 +230,7 @@ class RVObservingRun:
                             obs_assignments[(target, night, slot)] = model.NewBoolVar(
                                 f"{target}_{night.jd:.2f}_{slot}"
                             )
+                logger.info(f"Created {len(obs_assignments)} decision variables")
 
                 # Make sure each observation is only assigned to at most one target
                 for night in valid_nights:
@@ -313,11 +314,6 @@ class RVObservingRun:
                     f"Optimal schedule found, observing {targets_observed} "
                     "stars at least once."
                 )
-                # breakpoint()
-                # else:
-                #     raise RuntimeError(
-                #         f"No optimal schedule possible for {self.name} observing run."
-                #     )
             case "random":
                 # Calculate the number of observations per year, most years
                 # will have nobs observations, but this accounts for the first
@@ -436,6 +432,7 @@ class RVObservingRun:
             obs_nights = Time(obs_nights, format="jd")
         else:
             raise ValueError("This night scheduling scheme doesn't exist")
+        logger.info(f"Observing nights scheduled for {self.name}")
         return obs_nights
 
     def make_observations(self, universe):
@@ -463,13 +460,11 @@ class RVObservingRun:
             # Now get the system's true rv values at those observation times
             system = universe.systems[system_id]
             prop = system.propagate(
-                rv_obs_times, prop="nbody", ref_frame="bary-sky", clean=True
+                rv_obs_times, prop="nbody", ref_frame="bary", clean=True
             )
             true_rv_SI = prop.sel(
-                object="star", index=0, ref_frame="bary-sky", prop="nbody"
+                object="star", index=0, ref_frame="bary", prop="nbody"
             )["vz"].values
-            # df = system.rv_df[system.rv_df.t.isin(rv_obs_times)]
-            # true_rv_SI = df.rv
 
             # RVInstrument's sigma_rv in matching units
             run_sigma_rv_SI = self.sigma_rv(system, rv_obs_times).decompose().value
@@ -508,15 +503,6 @@ class RVObservingRun:
             obs_df = pd.DataFrame(stacked_arrays, columns=columns)
 
             # Simplify datatypes
-            # dtypes = {
-            #     "time": np.float,
-            #     "mnvel": np.float,
-            #     "errvel": np.float,
-            #     "tel": str,
-            #     "truevel": np.float,
-            #     "t_year": np.float,
-            #     "system_id": int,
-            # }
             dtypes = {
                 "time": float,
                 "mnvel": float,

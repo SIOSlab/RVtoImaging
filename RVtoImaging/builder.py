@@ -271,6 +271,11 @@ class RVtoImaging:
 
         # Create path for the universe object
         self.universe_path = Path(self.universe_dir, "universe.p")
+        if universe_type == "exovista":
+            data_path = Path(self.universe_dir, "ExoVista")
+            if not data_path.exists():
+                data_path.mkdir(parents=True, exist_ok=True)
+            universe_params["data_path"] = str(data_path)
 
         # Load or create universe
         if self.universe_path.exists():

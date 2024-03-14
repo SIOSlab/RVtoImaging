@@ -8,6 +8,7 @@ from pathlib import Path
 
 import astropy.constants as const
 import astropy.units as u
+import dill
 import erfa
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -70,32 +71,8 @@ class ImagingProbability:
         self.script_path = Path(params["script"])
         with open(self.script_path) as f:
             specs = json.loads(f.read())
+        specs["exoverses_universe"] = universe
         self.SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
-        # self.SS.vprint = vprint(False)
-        if not np.all(self.SS.SimulatedUniverse.a == universe.SU.a):
-            SU = self.SS.SimulatedUniverse
-            circular = SU.e == 0
-            SU.w[circular] = 0
-
-            # Replace the initialized SS module's planets with all the ones
-            # from the universe
-            for system, orig_sInd, name in zip(
-                universe.systems, universe.SU.sInds, universe.SU.TargetList.Name
-            ):
-                if name in self.SS.TargetList.Name:
-                    if np.any(system.getpattr("inc") < 0):
-                        for planet in system.planets:
-                            planet.inc = np.mod(planet.inc, 180 * u.deg)
-                    target_sInd = np.where(self.SS.TargetList.Name == name)[0][0]
-                    self.SS = utils.replace_EXOSIMS_system(self.SS, target_sInd, system)
-                    self.SS.TargetList.I[target_sInd] = universe.SU.TargetList.I[
-                        orig_sInd
-                    ]
-            SU = self.SS.SimulatedUniverse
-            SU.nPlans = len(SU.plan2star)
-            if SU.earthPF:
-                SU.phiIndex = np.ones(SU.nPlans, dtype=int) * 2
-            self.SS.SimulatedUniverse.init_systems()
 
         # for sInd in
         # utils.replace_EXOSIMS_system(self.SS, sInd, )
@@ -311,9 +288,9 @@ class ImagingProbability:
                     # self.plot(system, system_pops, self.pdet_times, system_pdets)
                     # pdet_xr_set.to_netcdf(pdet_path)
                     with open(pdet_path, "wb") as f:
-                        pickle.dump(pdet_xr_set, f)
+                        dill.dump(pdet_xr_set, f)
                     with open(pops_path, "wb") as f:
-                        pickle.dump(system_pops, f)
+                        dill.dump(system_pops, f)
                 else:
                     logger.info(
                         f"Star {system_n} of {len(orbitfit.paths)}. "
@@ -324,9 +301,9 @@ class ImagingProbability:
                     #     pdet_path, decode_cf=True, decode_times=True, engine="netcdf4"
                     # )
                     with open(pdet_path, "rb") as f:
-                        pdet_xr_set = pickle.load(f)
+                        pdet_xr_set = dill.load(f)
                     with open(pops_path, "rb") as f:
-                        self.pops[universe.names[system_id]] = pickle.load(f)
+                        self.pops[universe.names[system_id]] = dill.load(f)
 
                     system_pops = self.pops[universe.names[system_id]]
                     if not hasattr(system_pops[0], "chains_spec"):

@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import astropy.units as u
+import dill
 import numpy as np
 from astropy.time import Time
 
@@ -239,7 +240,7 @@ class RVFits:
                             best_prob = searcher.mcmc_best_prob
                             fitted_system = FitSystem(searcher, system)
                             with open(Path(fit_dir, "fitsystem.p"), "wb") as f:
-                                pickle.dump(fitted_system, f)
+                                dill.dump(fitted_system, f)
                             mcmc_success = True
                             mcmc_converged = bool(searcher.mcmc_converged)
                         else:
