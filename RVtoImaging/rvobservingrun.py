@@ -33,6 +33,9 @@ class RVObservingRun:
         # The terms used to calculate sigma_rv fot this observing run
         self.sigma_terms = run_params["sigma_terms"]
 
+        self.rv_noise_mitigation = run_params.get("rv_noise_mitigation")
+        self.rv_noise_cutoff = run_params.get("rv_noise_cutoff")
+
         # Must be a site name from astropy.coordinates.EarthLocation.get_site_names(),
         # or None if using the simple observing scheme
         self.location = run_params["location"]
@@ -52,6 +55,11 @@ class RVObservingRun:
 
         if "target_df" in run_params.keys():
             self.target_df = run_params["target_df"]
+
+        logger.info(
+            f"Filtering out targets with predicted noise above {self.rv_noise_cutoff}"
+        )
+        self.filter_target_df(universe)
 
         # Create spec file for dumping later
         self.spec = {
@@ -88,6 +96,7 @@ class RVObservingRun:
         self.run_path = Path(
             run_params["universe_dir"], "obs_runs", f"{self.run_name}.p"
         )
+
         if self.run_path.exists():
             logger.info(f"Loading the {self.name} observing run from {self.run_path}")
             with open(self.run_path, "rb") as f:
@@ -109,11 +118,24 @@ class RVObservingRun:
             with open(self.run_path, "wb") as f:
                 dill.dump(self, f)
 
+    def filter_target_df(self, universe):
+        """Filter out targets with predicted noise above the cutoff"""
+        targets_to_drop = []
+        for _, target in self.target_df.iterrows():
+            system = universe.systems[int(target.universe_id)]
+            sigma_rv = self.sigma_rv(system)
+            if sigma_rv > self.rv_noise_cutoff:
+                targets_to_drop.append(target.HIP)
+        # Drop the targets
+        self.target_df = self.target_df[~self.target_df.HIP.isin(targets_to_drop)]
+        logger.info(f"Dropped {len(targets_to_drop)} targets")
+
     def create_observation_schedule(self, workers):
         """
         Creates an observation schedule according to the observation scheme set
         Adds all observation times to the self.target_df DataFrame
         """
+
         # Calculate which nights the stars are observable given the time frame
         # Maybe set this up with the times value instead of time_range?
         logger.info(
@@ -467,7 +489,7 @@ class RVObservingRun:
             )["vz"].values
 
             # RVInstrument's sigma_rv in matching units
-            run_sigma_rv_SI = self.sigma_rv(system, rv_obs_times).decompose().value
+            run_sigma_rv_SI = self.sigma_rv(system).decompose().value
 
             # Get the velocity offsets assuming Gaussian noise
             rv_offset = np.random.normal(scale=run_sigma_rv_SI, size=len(true_rv_SI))
@@ -527,8 +549,15 @@ class RVObservingRun:
             drop=True
         )
 
-    def sigma_rv(self, system, times):
-        # TODO make this more intelligent
-        sigma_values = np.fromiter(self.sigma_terms.values(), dtype=u.Quantity)
-        sigma_rv = np.sqrt(np.mean(np.square(sigma_values)))
+    def sigma_rv(self, system):
+        star = system.star
+        star_sigma_terms = self.sigma_terms.copy()
+        for noise_term, mitigation_term in self.rv_noise_mitigation.items():
+            # Clip to zero
+            star_sigma_terms[noise_term] = max(
+                getattr(star, noise_term) - mitigation_term, 0
+            )
+
+        star_sigma_values = np.fromiter(star_sigma_terms.values(), dtype=u.Quantity)
+        sigma_rv = np.sqrt(np.sum(np.square(star_sigma_values)))
         return sigma_rv
