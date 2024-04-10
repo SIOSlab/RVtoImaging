@@ -401,6 +401,14 @@ class RVtoImaging:
     def create_pdet(self, pdet_params):
         with open(Path(pdet_params["script"])) as f:
             exosims_script = json.loads(f.read())
+        EXOSIMS_overwrites = pdet_params.get("EXOSIMS_overwrites", {})
+        if EXOSIMS_overwrites:
+            exosims_script = utils.overwrite_script(exosims_script, EXOSIMS_overwrites)
+            # exosims_script.update(EXOSIMS_overwrites)
+        # target_list = pdet_params.get("target_list", False)
+        # if target_list:
+        #     exosims_script["catalogpath"] = pdet_params["target_list"]
+
         if "forced_seed" in pdet_params.keys():
             # Make a copy of the exosims json and save it to the cache, then
             # delete after

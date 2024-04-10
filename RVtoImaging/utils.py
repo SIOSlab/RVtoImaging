@@ -633,6 +633,37 @@ def flatten_dict(dictionary, parent_key="", separator="_"):
     return dict(items)
 
 
+def overwrite_script(specs, overwrites):
+    # Overwrite the specification with the overwrites
+    # Overwrite the base values
+    specs.update(overwrites["base"])
+
+    # Overwrite the observing mode values
+    obs_modes = overwrites.get("observingModes")
+    if obs_modes:
+        print("THIS IS NOT IMPLEMENTED YET")
+        print("Probably need to key on both instName and systName")
+        breakpoint()
+
+    # Overwrite the science instruments
+    insts = overwrites.get("scienceInstruments")
+    if insts:
+        for key, val in insts.items():
+            for _dict in specs["scienceInstruments"]:
+                if _dict["name"] == key:
+                    _dict.update(val)
+
+    # Overwrite starlight suppression systems
+    sss = overwrites.get("starlightSuppressionSystems")
+    if sss:
+        for key, val in sss.items():
+            for _dict in specs["starlightSuppressionSystems"]:
+                if _dict["name"] == key:
+                    _dict.update(val)
+    # Propagate the changes to the loaded script
+    return specs
+
+
 def EXOSIMS_script_hash(script_path, specs=None):
     valid_types = [str, int, float, u.quantity.Quantity, type(None)]
     if specs is None:

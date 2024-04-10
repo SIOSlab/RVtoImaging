@@ -1146,9 +1146,9 @@ class ImagingSchedule:
                 fig.tight_layout()
                 fig.savefig(fig_path, dpi=300)
         ####
-        threshdf = pd.DataFrame(thresh_arr, columns=self.block_multiples)
-        breakpoint()
-        threshdf
+        pd.DataFrame(thresh_arr, columns=self.block_multiples)
+        # breakpoint()
+        # threshdf
         ####
         figsc_path1 = Path(f"{self.result_path}/full_schedule.png")
         # figsc_path2 = Path(f"{self.finished_path}ng")
