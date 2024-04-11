@@ -168,6 +168,7 @@ class RVtoImaging:
         self.workers = workers
 
     def create_universe(self, universe_params):
+        universe_params = universe_params.copy()
         universe_type = universe_params["universe_type"]
         universe_spec = universe_params.copy()
         # Create hash from universe parameters

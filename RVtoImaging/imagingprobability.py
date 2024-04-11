@@ -86,6 +86,7 @@ class ImagingProbability:
         if max_int_time > self.SS.TargetList.OpticalSystem.intCutoff:
             logger.warn("Maximum integration time exceeds EXOSIMS intCutoff")
 
+        include_keepout_in_pdet = params.get("include_keepout_in_pdet", False)
         # max_int_time = self.SS.TargetList.OpticalSystem.intCutoff
         self.int_times = self.gen_int_times(min_int_time, max_int_time)
         self.WAs = self.gen_WAs()
@@ -101,7 +102,19 @@ class ImagingProbability:
         self.mcmc_info = {}
         # tmp = pd.json_normalize(specs, sep=',')
         # items = []
-        self.script_hash = utils.EXOSIMS_script_hash(self.script_path)
+        if not include_keepout_in_pdet:
+            self.skipped_EXOSIMS_keys = [
+                "koAngles_Sun",
+                "koAngles_Earth",
+                "koAngles_Moon",
+                "koAngles_Small",
+                "koAngles_SolarPanel",
+            ]
+        else:
+            self.skipped_EXOSIMS_keys = []
+        self.script_hash = utils.EXOSIMS_script_hash(
+            self.script_path, skip_list=self.skipped_EXOSIMS_keys
+        )
         # for col in tmp.columns:
         #     val = tmp[col]
         settings_str = (
@@ -115,6 +128,7 @@ class ImagingProbability:
             f"{self.script_hash}"
         )
         self.settings_hash = genHexStr(settings_str)
+        print("SETTINGS HASH IN PDET", self.settings_hash)
         self.system_paths = {
             universe.systems[system].star.name: path
             for system, path in zip(orbitfit.systems_to_fit, orbitfit.paths)
@@ -265,6 +279,7 @@ class ImagingProbability:
                             dim_dMag_interps,
                             self.SS,
                             workers=workers,
+                            ko_included=include_keepout_in_pdet,
                         )
                         system_pdets = system_pdets.add(system_pops[i].pdets)
                         populations_created += 1
@@ -388,7 +403,9 @@ class ImagingProbability:
             specs = json.load(f)
         if "seed" in specs.keys():
             specs.pop("seed")
-        hash = utils.EXOSIMS_script_hash(None, specs=specs)
+        hash = utils.EXOSIMS_script_hash(
+            None, specs=specs, skip_list=self.skipped_EXOSIMS_keys
+        )
 
         d = WAs.to(u.rad).value * TL.dist[target_sInd].to(u.AU)
         inc = np.repeat(135, len(WAs)) * u.deg
@@ -897,7 +914,9 @@ class PlanetPopulation:
 
         return WA, dMag
 
-    def calculate_pdet(self, obs_times, int_times, dim_dMag_interps, SS, workers=1):
+    def calculate_pdet(
+        self, obs_times, int_times, dim_dMag_interps, SS, workers=1, ko_included=False
+    ):
         # Unpacking necessary values
         TL = SS.TargetList
         OS = TL.OpticalSystem
@@ -910,6 +929,8 @@ class PlanetPopulation:
         target_sInd = np.where(TL.Name == self.name)[0][0]
         target_ko = SS.koMaps[mode["syst"]["name"]][target_sInd]
         koT = SS.koTimes
+        if not ko_included:
+            target_ko = np.ones(len(koT), dtype=bool)
 
         # self.prop_for_imaging(obs_times[0])
         # Calculating the WA and dMag values of all orbits at all times
@@ -976,6 +997,13 @@ class PlanetPopulation:
         pbar.update_to(counter.value)
         pdets = np.zeros(len(int_times))
 
+        # Find the day of the observation for the keepout map
+        starts_in_keepout = target_ko[koT <= obs_time][-1]
+        if not starts_in_keepout:
+            # If the observation starts in keepout, ignore this observation time
+            # by returning zeros
+            return pdets
+
         # Mask with obscuration constraint
         obscuration_mask = (IWA < WA) & (OWA > WA)
 
@@ -985,21 +1013,22 @@ class PlanetPopulation:
         known_visible = 0
 
         after_current_time = koT >= obs_time
+        interp_fun = dim_dMag_interps[fZ_key]
+
         for i, int_time in enumerate(int_times):
-            # Signal = np.zeros(len(dMag))
-            # Noise = np.zeros(len(dMag))
             before_final_time = koT <= (obs_time + int_time)
             relevant_ko = target_ko[before_final_time & after_current_time]
-            if np.any(relevant_ko is False):
+
+            if np.any(~relevant_ko):
                 # If any part of the observation would be in keepout,
                 # ignore this observation time
                 break
             else:
-                if len(worth_checking_inds) > 0:
+                if worth_checking_inds.size > 0:
                     visible_for_int_time = (
-                        dim_dMag_interps[fZ_key](WA[worth_checking_inds], int_time)
+                        interp_fun(WA[worth_checking_inds], int_time)
                     ) > dMag[worth_checking_inds]
-                    known_visible += sum(visible_for_int_time)
+                    known_visible += np.sum(visible_for_int_time)
                     worth_checking_inds = worth_checking_inds[~visible_for_int_time]
                 pdets[i] = known_visible / self.n_fits
 

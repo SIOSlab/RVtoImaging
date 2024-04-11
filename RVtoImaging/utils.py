@@ -664,8 +664,8 @@ def overwrite_script(specs, overwrites):
     return specs
 
 
-def EXOSIMS_script_hash(script_path, specs=None):
-    valid_types = [str, int, float, u.quantity.Quantity, type(None)]
+def EXOSIMS_script_hash(script_path, specs=None, skip_list=[]):
+    valid_types = [str, int, float, u.quantity.Quantity, type(None), list]
     if specs is None:
         with open(script_path) as f:
             specs = json.loads(f.read())
@@ -685,13 +685,15 @@ def EXOSIMS_script_hash(script_path, specs=None):
             elif "instName" in _dict.keys():
                 _name = f"{_dict['instName']}{_dict['systName']}"
             for sub_key, sub_val in _dict.items():
-                if (sub_key not in ["name", "instName", "systName"]) and (
-                    type(sub_val) in valid_types
+                if (
+                    (sub_key not in ["name", "instName", "systName"])
+                    and (type(sub_val) in valid_types)
+                    and (sub_key not in skip_list)
                 ):
                     all_info.append(f"{key}{_name}{sub_key}{sub_val}")
                     flattened_dict[f"{key}{_name}{sub_key}"] = sub_val
                 else:
                     rejected.append(_dict[sub_key])
         flattened_dict.pop(key)
-    hash = genHexStr(dictToSortedStr(specs))
+    hash = genHexStr(dictToSortedStr(flattened_dict))
     return hash

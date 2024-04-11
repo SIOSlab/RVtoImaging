@@ -9,9 +9,10 @@ logger.setLevel(logging.DEBUG)
 shell_handler.setLevel(logging.INFO)
 file_handler.setLevel(logging.DEBUG)
 
-shell_fmt = "%(levelname)s [%(asctime)s] %(message)s"
+shell_fmt = "[RVtoImaging] %(levelname)s [%(asctime)s] %(message)s"
 file_fmt = (
-    "%(levelname)s %(asctime)s [%(filename)s:%(funcName)s:%(lineno)d] %(message)s"
+    "[RVtoImaging] %(levelname)s %(asctime)s [%(filename)s:"
+    "%(funcName)s:%(lineno)d] %(message)s"
 )
 
 shell_formatter = logging.Formatter(shell_fmt)

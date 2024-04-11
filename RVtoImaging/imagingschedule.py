@@ -67,7 +67,7 @@ class ImagingSchedule:
             "max_time_in_seconds",
         ]
         self.params = params
-        necessary_params = {}
+        necessary_params = {"pdet_hash": pdet.settings_hash}
         for _param in necessary_param_names:
             assert (
                 _param in params.keys()
@@ -113,6 +113,24 @@ class ImagingSchedule:
                         f"{_param} to default of {_val}"
                     )
                 )
+        # Add the keeoput angles to the hash
+        mode = list(
+            filter(
+                lambda mode: mode["detectionMode"],
+                pdet.SS.TargetList.OpticalSystem.observingModes,
+            )
+        )[0]
+        syst = mode["syst"]
+        if sun_ko := syst.get("koAngles_Sun"):
+            necessary_params["koAngles_Sun"] = sun_ko
+        if earth_ko := syst.get("koAngles_Earth"):
+            necessary_params["koAngles_Earth"] = earth_ko
+        if moon_ko := syst.get("koAngles_Moon"):
+            necessary_params["koAngles_Moon"] = moon_ko
+        if small_ko := syst.get("koAngles_Small"):
+            necessary_params["koAngles_Small"] = small_ko
+
+        # Create a hash to identify this schedule
         self.hash = genHexStr(dictToSortedStr(necessary_params))
 
         self.result_path = Path(universe_dir, "results", f"schedule_{self.hash}")
@@ -370,7 +388,7 @@ class ImagingSchedule:
             star_xr = pdet.pdets[star].pdet
             self.star_planets[star] = star_xr.planet.values
             # Array of booleans for each observation window, for current star
-            # True means the star is observable
+            # True means the star is in keepout
             obs_window_ko = np.array(
                 np.floor(
                     np.interp(self.obs_times_jd, self.koTimes_jd, self.koMaps[star_ind])
@@ -880,6 +898,16 @@ class ImagingSchedule:
             scale="tai",
         )
         figsc, axsc = plt.subplots(figsize=(11, 20))
+        # Load the detection mode
+        mode = list(
+            filter(
+                lambda mode: mode["detectionMode"],
+                SS.TargetList.OpticalSystem.observingModes,
+            )
+        )[0]
+        ko_sun = mode["syst"]["koAngles_Sun"].value.astype(int).tolist()
+        koMaps = SS.koMaps[mode["syst"]["name"]]
+        koTimes = SS.koTimes
 
         # Could do colorbars like the SPIE paper for the 1 day pdet values
         nplans = len(SU.plan2star)
@@ -928,6 +956,7 @@ class ImagingSchedule:
 
         axsc.set_title(
             f"ExoZodi quantile: {pdet.fEZ_quantile:.2f}, "
+            f"Sun keepout: {ko_sun}, "
             f"{self.unique_planets_detected}/{self.total_planets} detected, "
             f"{self.total_success}/{self.total_obs}, "
             f"{self.total_int_time}"  # , "
@@ -989,17 +1018,25 @@ class ImagingSchedule:
                     int_time=np.array(self.block_multiples)
                     * self.block_length.to(u.d).value,
                 ).values
-
-                alphas = np.ones(pdet_vals.shape) * 0.5
-                alphas[pdet_vals >= self.planet_threshold] = 0.75
-
-                # Have to find the right pInd to plot on since it's not
-                # in the same order
                 pop = pdet.pops[system_name][pval]
                 sInd = np.where(SS.TargetList.Name == system_name)[0][0]
                 pInds = np.where(SU.plan2star == sInd)[0]
                 pInd = pInds[np.argmin(np.abs(np.median(pop.a) - SU.a[pInds]))]
                 extent = 0, end_time_jd - start_time_jd, pInd + 0.5, pInd + 1.5
+
+                # This is the threshold for the probability of detection
+                alphas = np.ones(pdet_vals.shape) * 0.3
+                # This sets the alpha based on the detection threshold
+                # alphas[pdet_vals >= self.planet_threshold] = 0.75
+
+                # This sets it based on keepout
+                target_ko = np.interp(obs_times.jd, koTimes.jd, koMaps[sInd]).astype(
+                    bool
+                )
+                alphas[:, target_ko] = 0.75
+
+                # Have to find the right pInd to plot on since it's not
+                # in the same order
                 axsc.imshow(
                     pdet_vals,
                     aspect="auto",
