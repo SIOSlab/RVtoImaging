@@ -128,7 +128,6 @@ class ImagingProbability:
             f"{self.script_hash}"
         )
         self.settings_hash = genHexStr(settings_str)
-        print("SETTINGS HASH IN PDET", self.settings_hash)
         self.system_paths = {
             universe.systems[system].star.name: path
             for system, path in zip(orbitfit.systems_to_fit, orbitfit.paths)

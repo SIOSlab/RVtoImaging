@@ -200,6 +200,9 @@ class ImagingSchedule:
                     self.summary_stats,
                 ) = pdet.SS.sim_fixed_schedule(self.schedule)
 
+                self.summary_stats["Sun_ko"] = (
+                    syst.get("koAngles_Sun").to(u.deg).value.tolist()
+                )
                 self.summary_stats["fitted_planets"] = sum(
                     [len(pdet.pops[key]) for key in pdet.pops.keys()]
                 )
