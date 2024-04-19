@@ -1,0 +1,131 @@
+{
+  "catalogpath": "/home/corey/Documents/github/RVtoImaging/.cache/exovista_available_HIPs.csv",
+  "commonSystemfEZ": true,
+  "missionLife": 5.0,
+  "missionStart": 67250,
+  "missionPortion": 0.5,
+  "GAPortion_SS": 0.5,
+  "GA_simult_det_fraction": 0.0,
+  "int_inflection": false,
+  "minComp": 0.1,
+  "pupilDiam": 6,
+  "obscurFac": 0.0,
+  "magEZ": 22.4205,
+  "intCutoff": 60.0,
+  "texp_flag": true,
+  "scaleWAdMag": true,
+  "charMargin": 0.01,
+  "nVisitsMax": 10,
+  "occ_max_visits": 1,
+  "phase1_end": 16,
+  "lum_exp": 1.0,
+  "cachedir": "/home/corey/.EXOSIMS/cache_ATSA20200921",
+  "binaryleakfilepath": "/home/corey/Documents/github/RVtoImaging/scripts/rhonda_files/leakData.csv",
+  "wdsfilepath": "/home/corey/Documents/github/RVtoImaging/scripts/rhonda_files/ExoCat_WDS_Sep_dM.csv",
+  "EZ_distribution": "/home/corey/Documents/github/RVtoImaging/scripts/rhonda_files/nominal_maxL_distribution-Dec2019.fits",
+  "include_known_RV": "/home/corey/Documents/github/RVtoImaging/scripts/rhonda_files/EPRV_stars/HIP_RV_musts.txt",
+  "coeffs": [
+    0.12,
+    0,
+    0.5,
+    0,
+    0.3,
+    0,
+    0.05
+  ],
+  "settlingTime": 0.042,
+  "thrust": 1200,
+  "slewIsp": 2800,
+  "scMass": 14500,
+  "dryMass": 6722,
+  "coMass": 5800,
+  "occulterSep": 120E3,
+  "skIsp": 308,
+  "defburnPortion": 0.85,
+  "ppFact": 0.29,
+  "ppFact_char": 0.1,
+  "stabilityFact": 0.1,
+  "eta": 1,
+  "scaleOrbits": false,
+  "constrainOrbits": true,
+  "keepStarCatalog": true,
+  "fillPhotometry": true,
+  "explainFiltering": true,
+  "earths_only": false,
+  "filter_for_char": false,
+  "use_char_minintime": true,
+  "lucky_planets": false,
+  "find_known_RV": false,
+  "scienceInstruments": [
+    {
+      "name": "imagingBlueEMCCD",
+      "QE": 0.9,
+      "optics": 0.29,
+      "pixelScale": 0.00955,
+      "pixelSize": 13e-6,
+      "sread": 0,
+      "idark": 3e-5,
+      "CIC": 1.3e-3,
+      "texp": 100,
+      "ENF": 1,
+      "PCeff": 0.75
+    }
+  ],
+  "starlightSuppressionSystems": [
+    {
+      "name": "VVC500",
+      "lam": 500,
+      "IWA": 0.02,
+      "OWA": 1.650,
+      "ohTime": 0.2,
+      "BW": 0.20,
+      "optics": 0.95,
+      "optics_comment": "contamination",
+      "core_platescale": 0.1,
+      "occ_trans": "/home/corey/Documents/github/RVtoImaging/scripts/rhonda_files/Krist_occ_trans2_6m_asec500nm_OWA128.fits",
+      "core_thruput": "/home/corey/Documents/github/RVtoImaging/scripts/rhonda_files/Krist_core_thruput_6m_asec500nm_OWA128.fits",
+      "core_contrast": 1e-10,
+      "koAngles_Small": [
+        1,
+        180
+      ],
+      "koAngles_Sun": [
+        40,
+        180
+      ],
+      "koAngles_Moon": [
+        1,
+        180
+      ],
+      "koAngles_Earth": [
+        1,
+        180
+      ]
+    }
+  ],
+  "observingModes": [
+    {
+      "instName": "imagingBlueEMCCD",
+      "systName": "VVC500",
+      "detection": 1,
+      "lam": 500,
+      "SNR": 7
+    }
+  ],
+  "modules": {
+    "PlanetPopulation": "",
+    "StarCatalog": "HIPfromSimbad",
+    "OpticalSystem": "Nemati",
+    "ZodiacalLight": "Mennesson",
+    "BackgroundSources": "GalaxiesFaintStars",
+    "PlanetPhysicalModel": "",
+    "Observatory": "WFIRSTObservatoryL2",
+    "TimeKeeping": " ",
+    "PostProcessing": " ",
+    "Completeness": "BrownCompleteness",
+    "TargetList": "RVprecursor",
+    "SimulatedUniverse": "ExoversesUniverse",
+    "SurveySimulation": "RVScheduler",
+    "SurveyEnsemble": ""
+  }
+}
