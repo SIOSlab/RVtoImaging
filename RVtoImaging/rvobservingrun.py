@@ -119,16 +119,20 @@ class RVObservingRun:
                 dill.dump(self, f)
 
     def filter_target_df(self, universe):
-        """Filter out targets with predicted noise above the cutoff"""
+        """Filter out targets with predicted noise above the cutoff and"""
         targets_to_drop = []
         for _, target in self.target_df.iterrows():
             system = universe.systems[int(target.universe_id)]
             sigma_rv = self.sigma_rv(system)
             if sigma_rv > self.rv_noise_cutoff:
                 targets_to_drop.append(target.HIP)
+            if not system.has_planets:
+                targets_to_drop.append(target.HIP)
         # Drop the targets
         self.target_df = self.target_df[~self.target_df.HIP.isin(targets_to_drop)]
-        logger.info(f"Dropped {len(targets_to_drop)} targets")
+        logger.info(
+            f"Dropped {len(targets_to_drop)} targets due to noise or lack of planets"
+        )
 
     def create_observation_schedule(self, workers):
         """

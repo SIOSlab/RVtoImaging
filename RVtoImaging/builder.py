@@ -251,6 +251,7 @@ class RVtoImaging:
             universe_spec.update(new_params)
         elif universe_type == "exovista":
             if "forced_seed" in universe_params.keys():
+                universe_spec["universe_number"] = universe_params["forced_seed"]
                 universe_params["universe_number"] = universe_params["forced_seed"]
 
         # Remove exosims script name if given, will probably be better as a

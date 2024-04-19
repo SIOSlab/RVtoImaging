@@ -130,6 +130,83 @@ class ImagingSchedule:
         if small_ko := syst.get("koAngles_Small"):
             necessary_params["koAngles_Small"] = small_ko
 
+        # WARNING: This is a hacky way to do this, this should be elsewhere
+        # Determine the number of planets that could have been detected
+        # three times
+        SS = pdet.SS
+        start_time_jd = SS.TimeKeeping.missionStart.jd
+        end_time_jd = start_time_jd + self.sim_length.to(u.d).value
+        obs_times = Time(
+            np.arange(
+                start_time_jd,
+                end_time_jd,
+                self.block_length.to(u.d).value,
+            ),
+            format="jd",
+            scale="tai",
+        )
+        int_times = np.array(self.block_multiples) * self.block_length.to(u.d)
+
+        data = []
+        for system in pdet.pops.keys():
+            system_pdet = pdet.pdets[system]
+            for planet in system_pdet.planet.values:
+                planet_pdet = system_pdet.sel(planet=planet).interp(
+                    time=obs_times.datetime64, int_time=int_times
+                )["pdet"]
+
+                # Convert the times where pdet == 1 to a pandas DataFrame for
+                # easier manipulation.
+                valid_observations = planet_pdet.where(planet_pdet == 1)
+                df = (
+                    valid_observations.to_dataframe()
+                    .reset_index()
+                    .dropna()
+                    .reset_index(drop=True)
+                )
+                df.rename(columns={"time": "start_time"}, inplace=True)
+                df.drop(columns=["planet", "pdet"], inplace=True)
+                if df.empty:
+                    data.append(
+                        {"system": system, "planet": planet, "max_observations": 0}
+                    )
+                    continue
+
+                df["end_time"] = (
+                    Time(df["start_time"]) + df["int_time"] * u.d
+                ).datetime64
+                df = (
+                    df[Time(df["end_time"]) < Time(end_time_jd, format="jd")]
+                    .sort_values(by="end_time")
+                    .reset_index(drop=True)
+                )
+                selected_observations = []
+
+                last_end_time = Time("0001-01-01")  # Initialize with a very early time
+                # Iterate over the sorted DataFrame
+                start_times = Time(df["start_time"])
+                for index, start_time in enumerate(start_times):
+                    if start_time >= last_end_time + self.min_required_wait_time:
+                        row = df.iloc[index]
+                        # If the current row's start_time is after the
+                        # last_end_time plus the required wait time, select it.
+                        selected_observations.append(row)
+                        last_end_time = Time(row["end_time"])
+                    if len(selected_observations) >= self.requested_planet_observations:
+                        break
+                possible_observations = len(selected_observations)
+                data.append(
+                    {
+                        "system": system,
+                        "planet": planet,
+                        "max_observations": possible_observations,
+                    }
+                )
+
+        self.available_observations = pd.DataFrame(data)
+
+        ################
+
         # Create a hash to identify this schedule
         self.hash = genHexStr(dictToSortedStr(necessary_params))
 
@@ -206,6 +283,14 @@ class ImagingSchedule:
                 self.summary_stats["fitted_planets"] = sum(
                     [len(pdet.pops[key]) for key in pdet.pops.keys()]
                 )
+                # The number of planets that, if alone, could be observed
+                # the requested number of times
+                self.summary_stats["available_planets"] = len(
+                    self.available_observations.loc[
+                        self.available_observations["max_observations"]
+                        >= self.requested_planet_observations
+                    ]
+                )
                 with open(target_info_path, "wb") as f:
                     pickle.dump(self.targetdf, f)
                 with open(flat_info_path, "wb") as f:
@@ -239,9 +324,9 @@ class ImagingSchedule:
                 with open(random_walk_path, "wb") as f:
                     pickle.dump(self.random_walk_res, f)
 
+            # self.schedule_plots(pdet)
             finish_params["schedule_found"] = True
 
-            self.schedule_plots(pdet)
         finish_params["total_detections"] = self.total_success
         finish_params["total_observations"] = self.total_obs
         finish_params["total_int_time"] = self.total_int_time

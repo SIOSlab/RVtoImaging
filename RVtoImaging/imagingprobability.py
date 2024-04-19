@@ -91,6 +91,7 @@ class ImagingProbability:
         self.int_times = self.gen_int_times(min_int_time, max_int_time)
         self.WAs = self.gen_WAs()
         self.fEZ_quantile = params["fEZ_quantile"]
+        self.fEZ_exact = params.get("fEZ_exact", False)
 
         self.pdet_times = Time(
             np.arange(start_time.jd, end_time.jd, min_int_time.to(u.d).value),
@@ -188,7 +189,7 @@ class ImagingProbability:
                         (
                             "Loading chains and search data for "
                             f"{universe.names[system_id]}. "
-                            f"Star {system_n} of {len(orbitfit.paths)}."
+                            f"Star {system_n+1} of {len(orbitfit.paths)}."
                         )
                     )
                     chains = pd.read_csv(chains_path, compression="bz2")
@@ -258,6 +259,7 @@ class ImagingProbability:
                         if input_error:
                             continue
                         planet_chains = self.split_chains(chains, planet_num)
+                        # Check if any system planets are close
                         pop = PlanetPopulation(
                             planet_chains,
                             system,
@@ -311,9 +313,9 @@ class ImagingProbability:
                         dill.dump(system_pops, f)
                 else:
                     logger.info(
-                        f"Star {system_n} of {len(orbitfit.paths)}. "
+                        f"Star {system_n+1} of {len(orbitfit.paths)}. "
                         f"Probability of detection already exists for"
-                        f" {universe.systems[system_id].star.name}."
+                        f" {universe.systems[system_id].star.name}. Loading..."
                     )
                     # pdet_xr_set = xr.load_dataset(
                     #     pdet_path, decode_cf=True, decode_times=True, engine="netcdf4"
@@ -400,7 +402,7 @@ class ImagingProbability:
 
         with open(self.script_path, "r") as f:
             specs = json.load(f)
-        if "seed" in specs.keys():
+        if "seed" in specs.keys() and not self.fEZ_exact:
             specs.pop("seed")
         hash = utils.EXOSIMS_script_hash(
             None, specs=specs, skip_list=self.skipped_EXOSIMS_keys
@@ -416,8 +418,16 @@ class ImagingProbability:
 
         # # Generating a nEZ value
         # nStars = len(MV)
-        nEZ_arr = ZL.gen_systemnEZ(10000)
-        nEZ_per = np.quantile(nEZ_arr, fEZ_quantile)
+        if self.fEZ_exact:
+            # fEZ = SS.SimulatedUniverse.fEZ
+            nEZ = ZL.nEZ_star[target_sInd][0]
+            # fudge factor to account for different inclinations
+            nEZ += 0.5
+            nEZ_str = f"exact_{nEZ:.2f}.p"
+        else:
+            nEZ_arr = ZL.gen_systemnEZ(10000)
+            nEZ = np.quantile(nEZ_arr, fEZ_quantile)
+            nEZ_str = f"quant_{fEZ_quantile:.2f}.p"
 
         # inclinations should be strictly in [0, pi], but allow for weird sampling:
         beta = inc.to("deg").value
@@ -433,7 +443,7 @@ class ImagingProbability:
         fbeta = ZL.zodi_latitudinal_correction_factor(beta * u.deg, model="interp")
 
         fEZs = (
-            nEZ_per
+            nEZ
             * 10 ** (-0.4 * ZL.magEZ)
             * 10.0 ** (-0.4 * (MV - MVsun))
             * fbeta
@@ -448,7 +458,7 @@ class ImagingProbability:
             hash,
             (
                 f"{system.star.name.replace(' ', '_')}_{genHexStr(str(fZs))}_"
-                f"{fEZ_quantile:.2f}.p"
+                f"{nEZ_str}"
             ),
         )
         interps_path.parent.mkdir(parents=True, exist_ok=True)
@@ -700,29 +710,12 @@ class PlanetPopulation:
         elif np.any(self.T.to(u.yr).value > 1e7):
             self.input_error = True
         else:
-            self.input_error = False
             self.closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
             self.W = (
                 np.ones(len(self.T)) * p_df.at[self.closest_planet_ind, "W"] * u.deg
             )
-            # WARNING: Remove this
-            # self.secosw = np.zeros(self.n_fits)
-            # self.sesinw = np.zeros(self.n_fits)
-            # self.T = (
-            #     np.ones(self.n_fits) * self.system.planets[self.closest_planet_ind].T
-            # )
-            # self.T_c = Time(
-            #     np.repeat(self.system.planets[self.closest_planet_ind].T_c,
-            #     self.n_fits)
-            # )
-            # self.K = (
-            #     np.ones(self.n_fits) * self.system.planets[self.closest_planet_ind].K
-            # )
-
+            self.input_error = False
             self.create_population()
-            # self.w = (
-            #     np.zeros(self.n_fits) * self.system.planets[self.closest_planet_ind].w
-            # )
 
     def create_population(self):
         secosw = self.secosw
@@ -738,7 +731,7 @@ class PlanetPopulation:
                 e = 0.0001
         self.circular_mask = e < 0.01
         if np.mean(self.circular_mask) > 0.5:
-            logger.info("Assuming planet is on a circular orbit")
+            # logger.info("Assuming planet is on a circular orbit")
             self.circular = True
             self.e = np.zeros(self.n_fits)
             self.w_s = np.zeros(self.n_fits) * u.rad
