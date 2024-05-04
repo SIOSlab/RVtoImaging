@@ -694,6 +694,11 @@ class PlanetPopulation:
         # self.id = system.star.id
         self.name = system.star.name.replace("_", " ")
 
+        if self.method_name == "exact":
+            self.setup_exact(chains, system, nplan)
+            self.input_error = False
+            return
+
         # Cheating and using the most likely planet's W value instead of random
         # sampling because it doesn't impact imaging, just makes the plots
         # prettier.
@@ -883,6 +888,38 @@ class PlanetPopulation:
             format="jd",
         )
 
+    def setup_exact(self, chains, system, nplan):
+        p_df = system.get_p_df()
+        planet_vals = np.ones(len(system.planets))
+        chain_key_map = {"K": f"k{nplan}", "T": f"per{nplan}"}
+        for key in ["K", "T"]:
+            diff = np.abs(p_df[key] - chains[chain_key_map[key]].quantile(0.5))
+            sorted_inds = np.array(diff.sort_values().index)
+            for i, ind in enumerate(sorted_inds):
+                planet_vals[ind] += i
+        closest_planet_ind = np.where(planet_vals == np.min(planet_vals))[0][0]
+        self.T = system.planets[closest_planet_ind].T.reshape(1)
+        self.secosw = system.planets[closest_planet_ind].secosw.reshape(1)
+        self.sesinw = system.planets[closest_planet_ind].sesinw.reshape(1)
+        self.K = system.planets[closest_planet_ind].K.reshape(1)
+        self.T_c = system.planets[closest_planet_ind].T_c.reshape(1)
+        self.w = system.planets[closest_planet_ind].w.reshape(1)
+        self.W = system.planets[closest_planet_ind].W.reshape(1)
+        self.inc = system.planets[closest_planet_ind].inc.reshape(1)
+        self.a = system.planets[closest_planet_ind].a.reshape(1)
+        self.e = np.array([system.planets[closest_planet_ind].e])
+        self.T_p = system.planets[closest_planet_ind].T_p.reshape(1)
+        self.n = system.planets[closest_planet_ind].n.reshape(1)
+        self.t0 = self.T_c
+        self.mu = system.planets[closest_planet_ind].mu.reshape(1)
+        self.M0 = utils.mean_anom(system.planets[closest_planet_ind], self.t0)
+        self.Rp = system.planets[closest_planet_ind].radius.reshape(1)
+        self.Mp = system.planets[closest_planet_ind].mass.reshape(1)
+        self.circular = self.e == 0
+        self.phiIndex = np.array([system.planets[closest_planet_ind].exosims_phiIndex])
+        Rp_p_vals = [0.2, 0.2, 0.2, 0.5, 0.5, 0.5, 0.5]
+        self.p = np.array([Rp_p_vals[self.phiIndex[0]]])
+
     def prop_for_imaging(self, t):
         # Calculates the working angle and deltaMag
         a, e, inc, w = self.a, self.e, self.inc, self.w
@@ -909,64 +946,142 @@ class PlanetPopulation:
     def calculate_pdet(
         self, obs_times, int_times, dim_dMag_interps, SS, workers=1, ko_included=False
     ):
-        # Unpacking necessary values
-        TL = SS.TargetList
-        OS = TL.OpticalSystem
-        ZL = SS.ZodiacalLight
-        IWA = OS.IWA
-        OWA = OS.OWA
-        mode = list(
-            filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
-        )[0]
-        target_sInd = np.where(TL.Name == self.name)[0][0]
-        target_ko = SS.koMaps[mode["syst"]["name"]][target_sInd]
-        koT = SS.koTimes
-        if not ko_included:
-            target_ko = np.ones(len(koT), dtype=bool)
+        if self.method_name == "exact":
+            SU = SS.SimulatedUniverse
+            TL = SS.TargetList
+            OS = TL.OpticalSystem
+            ZL = SS.ZodiacalLight
+            TK = SS.TimeKeeping
+            Obs = SS.Observatory
+            self.t0 = TK.currentTimeAbs.copy()
+            self.M0 = utils.mean_anom(self, self.t0)
+            mode = list(
+                filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+            )[0]
+            # WARNING: I think this is robust when the method is exact, but
+            # technically it's possible for two planets to have the exact same
+            # period
+            pInd = np.where(SS.SimulatedUniverse.a == self.a)[0][0]
+            sInd = SU.plan2star[pInd]
+            # Set up loop for each observation time
+            pdets = np.zeros((len(int_times), len(obs_times)))
+            dt = (obs_times[1].jd - obs_times[0].jd) * u.d
+            _sInd = np.array([sInd])
+            _fEZ = SU.fEZ[pInd].reshape(1)
+            # Cps = np.zeros(len(obs_times))
+            # Cbs = np.zeros(len(obs_times))
+            # Csps = np.zeros(len(obs_times))
+            Cps = []
+            Cbs = []
+            Csps = []
+            # Generate all the count rates
+            for i, obs_time in enumerate(obs_times):
+                # Propagate the planet to the observation time
+                SU.propag_system(sInd, dt)
+                WA = SU.WA[pInd].reshape(1)
+                dMag = SU.dMag[pInd].reshape(1)
+                fZ = ZL.fZ(Obs, TL, sInd, obs_time, mode)[0].reshape(1)
+                Cp, Cb, Csp = OS.Cp_Cb_Csp(TL, _sInd, fZ, _fEZ, dMag, WA, mode, TK=TK)
+                Cps.append(Cp[0])
+                Cbs.append(Cb[0])
+                Csps.append(Csp[0])
+                # Cps[i], Cbs[i], Csps[i] = Cp[0], Cb[0], Csp[0]
+                counter.value += 1
+                pbar.update_to(counter.value)
+            # Get the count rates for the correct time which should be halfway
+            # through the observation window
+            Cps = u.Quantity(Cps)
+            Cbs = u.Quantity(Cbs)
+            Csps = u.Quantity(Csps)
+            for i, int_time in enumerate(int_times):
+                # Start by getting the correct obs time index offset for the
+                # integration time
+                offset = int((int_time.to(u.d).value / 2) / dt.to(u.d).value)
+                if offset < 1:
+                    # If the offset is less than the time between observations
+                    # we can just use the count rates from original obs_time
+                    map = np.full(len(obs_times), True, dtype=bool)
+                    signal = (Cps * int_time).decompose().value
+                    noise = np.sqrt(
+                        (Cbs * int_time + (Csps * int_time) ** 2).decompose().value
+                    )
+                else:
+                    map = np.full(len(obs_times), True, dtype=bool)
+                    map[:offset] = False
+                    signal = np.zeros(len(obs_times))
+                    noise = np.zeros(len(obs_times))
+                    signal[:-offset] = (Cps[map] * int_time).decompose().value
+                    noise[:-offset] = np.sqrt(
+                        (Cbs[map] * int_time + (Csps[map] * int_time) ** 2)
+                        .decompose()
+                        .value
+                    )
 
-        # self.prop_for_imaging(obs_times[0])
-        # Calculating the WA and dMag values of all orbits at all times
-        with Pool(processes=workers) as pool:
-            output = pool.map(self.WA_dMag_obj, obs_times)
-        all_WAs = []
-        all_dMags = []
-        for chunk in output:
-            all_WAs.append(chunk[0].to(u.arcsec).value)
-            all_dMags.append(chunk[1])
-        WAarr = np.array(all_WAs)
-        dMagarr = np.array(all_dMags)
+                SNR = signal / noise
+                obs_time_pdets = SNR >= (mode["SNR"] + 0.1)
+                pdets[i, :] = obs_time_pdets
 
-        fZ_interp = interp1d(koT.jd, ZL.fZMap[mode["systName"]][target_sInd])
-        fZs = fZ_interp(obs_times.jd)
-        fZ_interp_keys = np.array([x for x in dim_dMag_interps.keys()])
-        fZ_time_keys = np.zeros(len(fZs))
-        for i, fZ in enumerate(fZs):
-            greater_fZs = fZ_interp_keys[fZ_interp_keys > fZ]
-            if len(greater_fZs) == 0:
-                fZ_time_keys[i] = fZ_interp_keys[-1]
-            else:
-                fZ_time_keys[i] = min(greater_fZs)
+            self.pdets = pd.DataFrame(pdets, columns=obs_times)
+            SS.reset_sim(genNewPlanets=False)
+        else:
+            # Unpacking necessary values
+            TL = SS.TargetList
+            OS = TL.OpticalSystem
+            ZL = SS.ZodiacalLight
+            IWA = OS.IWA
+            OWA = OS.OWA
+            mode = list(
+                filter(lambda mode: mode["detectionMode"] is True, OS.observingModes)
+            )[0]
+            target_sInd = np.where(TL.Name == self.name)[0][0]
+            target_ko = SS.koMaps[mode["syst"]["name"]][target_sInd]
+            koT = SS.koTimes
+            if not ko_included:
+                target_ko = np.ones(len(koT), dtype=bool)
 
-        fZs = fZs * (1 / u.arcsec**2)
-        func_args = zip(
-            obs_times.jd,
-            WAarr,
-            dMagarr,
-            fZ_time_keys,
-            repeat(koT.jd),
-            repeat(target_ko),
-            repeat(IWA.to(u.arcsec).value),
-            repeat(OWA.to(u.arcsec).value),
-            repeat(sorted(int_times.to(u.d).value)),
-            repeat(dim_dMag_interps),
-        )
-        with Pool(processes=workers) as pool:
-            output = pool.starmap(self.pdet_obj, func_args)
+            self.prop_for_imaging(obs_times[0])
+            # Calculating the WA and dMag values of all orbits at all times
+            with Pool(processes=workers) as pool:
+                output = pool.map(self.WA_dMag_obj, obs_times)
+            all_WAs = []
+            all_dMags = []
+            for chunk in output:
+                all_WAs.append(chunk[0].to(u.arcsec).value)
+                all_dMags.append(chunk[1])
+            WAarr = np.array(all_WAs)
+            dMagarr = np.array(all_dMags)
 
-        # Turn output list of lists into a dataframe
-        output_arr = np.array(output)
-        self.pdets = pd.DataFrame(output_arr.T, columns=obs_times)
-        self.pdets.index = int_times
+            fZ_interp = interp1d(koT.jd, ZL.fZMap[mode["systName"]][target_sInd])
+            fZs = fZ_interp(obs_times.jd)
+            fZ_interp_keys = np.array([x for x in dim_dMag_interps.keys()])
+            fZ_time_keys = np.zeros(len(fZs))
+            for i, fZ in enumerate(fZs):
+                greater_fZs = fZ_interp_keys[fZ_interp_keys > fZ]
+                if len(greater_fZs) == 0:
+                    fZ_time_keys[i] = fZ_interp_keys[-1]
+                else:
+                    fZ_time_keys[i] = min(greater_fZs)
+
+            fZs = fZs * (1 / u.arcsec**2)
+            func_args = zip(
+                obs_times.jd,
+                WAarr,
+                dMagarr,
+                fZ_time_keys,
+                repeat(koT.jd),
+                repeat(target_ko),
+                repeat(IWA.to(u.arcsec).value),
+                repeat(OWA.to(u.arcsec).value),
+                repeat(sorted(int_times.to(u.d).value)),
+                repeat(dim_dMag_interps),
+            )
+            with Pool(processes=workers) as pool:
+                output = pool.starmap(self.pdet_obj, func_args)
+
+            # Turn output list of lists into a dataframe
+            output_arr = np.array(output)
+            self.pdets = pd.DataFrame(output_arr.T, columns=obs_times)
+            self.pdets.index = int_times
 
     def WA_dMag_obj(self, obs_time):
         WA, dMag = self.prop_for_imaging(obs_time)
