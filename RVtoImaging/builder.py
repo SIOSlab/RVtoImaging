@@ -9,6 +9,7 @@ from pathlib import Path
 import dill
 
 import RVtoImaging.utils as utils
+from EXOSIMS.util.get_module import get_module_from_specs
 from RVtoImaging.imagingprobability import ImagingProbability
 from RVtoImaging.imagingschedule import ImagingSchedule
 from RVtoImaging.logger import logger
@@ -446,6 +447,20 @@ class RVtoImaging:
             self.universe_dir,
             self.workers,
         )
+
+    def update_SS(self, pdet_params):
+        with open(Path(pdet_params["script"])) as f:
+            exosims_script = json.loads(f.read())
+        EXOSIMS_overwrites = pdet_params.get("EXOSIMS_overwrites", {})
+        if EXOSIMS_overwrites:
+            specs = utils.overwrite_script(exosims_script, EXOSIMS_overwrites)
+
+        specs["exoverses_universe"] = self.universe
+        specs["seed"] = pdet_params["forced_seed"]
+
+        # tmp_SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
+        # breakpoint()
+        self.pdet.SS = get_module_from_specs(specs, "SurveySimulation")(**specs)
 
     def list_parts(self) -> None:
         print(f"rv2img parts: {', '.join(self.parts)}", end="")
