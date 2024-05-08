@@ -276,6 +276,7 @@ class ImagingSchedule:
                     self.flatdf,
                     self.summary_stats,
                 ) = pdet.SS.sim_fixed_schedule(self.schedule)
+                self.flatdf = self.add_percentages(self.flatdf)
 
                 self.summary_stats["Sun_ko"] = (
                     syst.get("koAngles_Sun").to(u.deg).value.tolist()
@@ -933,6 +934,39 @@ class ImagingSchedule:
         final_df["dMags"] = dMags_lists
         final_df["WAs"] = WAs_lists
         return final_df
+
+    def add_percentages(self, flat_info):
+        """
+        Add the percentage of planets that have been observed at least once,
+        twice, and three times to the flat_info dataframe as a function of time.
+        This also re-orders the flat_info dataframe by time.
+        """
+        max_obs_per_planet = self.available_observations["max_observations"]
+
+        observable_planets = sum(max_obs_per_planet > 0)
+        twice_observable_planets = sum(max_obs_per_planet > 1)
+        thrice_observable_planets = sum(max_obs_per_planet > 2)
+        flat_info["time"] = Time(flat_info["obs_time"], format="jd").datetime
+        flat_info = flat_info.sort_values("time").reset_index(drop=True)
+        times = Time(flat_info["obs_time"], format="jd")
+        flat_info["time_since_mission_start"] = (
+            times.decimalyear - self.start_time.decimalyear
+        )
+        one_percents = []
+        two_percents = []
+        three_percents = []
+        for i, obs in flat_info.iterrows():
+            obs_counter = Counter(flat_info[: i + 1]["pind"])
+            one_counter = sum([1 for k, v in obs_counter.items() if v >= 1])
+            two_counter = sum([1 for k, v in obs_counter.items() if v >= 2])
+            three_counter = sum([1 for k, v in obs_counter.items() if v >= 3])
+            one_percents.append(one_counter / observable_planets)
+            two_percents.append(two_counter / twice_observable_planets)
+            three_percents.append(three_counter / thrice_observable_planets)
+        flat_info["planets_detected_at_least_once"] = one_percents
+        flat_info["planets_detected_at_least_twice"] = two_percents
+        flat_info["planets_detected_at_least_thrice"] = three_percents
+        return flat_info
 
     def schedule_plots(self, pdet):
         plt.style.use("dark_background")
