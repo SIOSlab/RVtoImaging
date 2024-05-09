@@ -201,15 +201,18 @@ class ImagingProbability:
                     system_pops = []
                     # Create the integration times and dMag0s
                     # dMag0s = self.gen_dMag0s(self.SS, system, self.int_times)
-                    dim_dMag_interps = self.gen_dim_dMag_interps(
-                        self.SS,
-                        system,
-                        self.int_times,
-                        self.WAs,
-                        self.fEZ_quantile,
-                        system_path,
-                        workers,
-                    )
+                    if self.method["name"] == "exact":
+                        dim_dMag_interps = None
+                    else:
+                        dim_dMag_interps = self.gen_dim_dMag_interps(
+                            self.SS,
+                            system,
+                            self.int_times,
+                            self.WAs,
+                            self.fEZ_quantile,
+                            system_path,
+                            workers,
+                        )
                     system_pdets = pd.DataFrame(
                         np.zeros((len(self.int_times), len(self.pdet_times))),
                         columns=self.pdet_times,
