@@ -699,6 +699,7 @@ class ImagingSchedule:
         vars["obj_terms"] = []
         vars["active_bools"] = []
         vars["size_vars"] = []
+        vars["end_vars"] = []
         vars["planet_terms"] = {}
         for star in tqdm(self.relevant_stars, desc="Creating observation booleans"):
             # list of the dictionary of interval variables
@@ -728,6 +729,7 @@ class ImagingSchedule:
                 start_domain = var_set["start_domain"]
                 vars["active_bools"].append(active_var)
                 vars["size_vars"].append(size_var)
+                vars["end_vars"].append(var_set["end"])
                 for n_obs in start_domain:
                     prev_above_threshold = 0
                     for n_int, n_times_blocks in enumerate(self.int_times_blocks):
@@ -810,6 +812,7 @@ class ImagingSchedule:
             + sum(amounts_above_threshold_terms)
             - sum(vars["size_vars"])
             - sum(vars["active_bools"])
+            - sum(vars["end_vars"])
         )
         return model
 

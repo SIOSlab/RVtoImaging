@@ -113,6 +113,7 @@ class ImagingProbability:
             ]
         else:
             self.skipped_EXOSIMS_keys = []
+        self.skipped_EXOSIMS_keys.append("missionPortion")
         self.script_hash = utils.EXOSIMS_script_hash(
             self.script_path, skip_list=self.skipped_EXOSIMS_keys
         )
