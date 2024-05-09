@@ -291,7 +291,9 @@ class RVtoImaging:
             exoverse_module = importlib.import_module(
                 f"exoverses.{universe_type}.universe"
             )
-            self.universe = exoverse_module.create_universe(universe_params)
+            self.universe = exoverse_module.create_universe(
+                universe_params, workers=self.workers
+            )
 
             # Cache
             with open(self.universe_path, "wb") as f:
