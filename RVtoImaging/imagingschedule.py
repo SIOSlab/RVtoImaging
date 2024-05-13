@@ -751,7 +751,8 @@ class ImagingSchedule:
         model.Maximize(
             sum(
                 self.coeff_multiple
-                * max(self.block_multiples)
+                # * max(self.block_multiples)
+                * self.n_obs_times
                 * all_planet_requested_observations
             )
             # + sum(amounts_above_threshold_terms)
