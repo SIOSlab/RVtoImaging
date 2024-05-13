@@ -90,6 +90,7 @@ class ImagingSchedule:
             "log_search_progress": True,
             "random_walk_method": "25dMag",
             "n_random_walks": 300,
+            "schedule_hint": None,
         }
         if opt_params is not None:
             for _param, _val in opt_param_defaults.items():
@@ -129,81 +130,6 @@ class ImagingSchedule:
             necessary_params["koAngles_Moon"] = moon_ko
         if small_ko := syst.get("koAngles_Small"):
             necessary_params["koAngles_Small"] = small_ko
-
-        # WARNING: This is a hacky way to do this, this should be elsewhere
-        # Determine the number of planets that could have been detected
-        # three times
-        SS = pdet.SS
-        start_time_jd = SS.TimeKeeping.missionStart.jd
-        end_time_jd = start_time_jd + self.sim_length.to(u.d).value
-        obs_times = Time(
-            np.arange(
-                start_time_jd,
-                end_time_jd,
-                self.block_length.to(u.d).value,
-            ),
-            format="jd",
-            scale="tai",
-        )
-        int_times = np.array(self.block_multiples) * self.block_length.to(u.d)
-
-        data = []
-        for system in pdet.pops.keys():
-            system_pdet = pdet.pdets[system]
-            for planet in system_pdet.planet.values:
-                planet_pdet = system_pdet.sel(planet=planet).interp(
-                    time=obs_times.datetime64, int_time=int_times
-                )["pdet"]
-
-                # Convert the times where pdet == 1 to a pandas DataFrame for
-                # easier manipulation.
-                valid_observations = planet_pdet.where(planet_pdet == 1)
-                df = (
-                    valid_observations.to_dataframe()
-                    .reset_index()
-                    .dropna()
-                    .reset_index(drop=True)
-                )
-                df.rename(columns={"time": "start_time"}, inplace=True)
-                df.drop(columns=["planet", "pdet"], inplace=True)
-                if df.empty:
-                    data.append(
-                        {"system": system, "planet": planet, "max_observations": 0}
-                    )
-                    continue
-
-                df["end_time"] = (
-                    Time(df["start_time"]) + df["int_time"] * u.d
-                ).datetime64
-                df = (
-                    df[Time(df["end_time"]) < Time(end_time_jd, format="jd")]
-                    .sort_values(by="end_time")
-                    .reset_index(drop=True)
-                )
-                selected_observations = []
-
-                last_end_time = Time("0001-01-01")  # Initialize with a very early time
-                # Iterate over the sorted DataFrame
-                start_times = Time(df["start_time"])
-                for index, start_time in enumerate(start_times):
-                    if start_time >= last_end_time + self.min_required_wait_time:
-                        row = df.iloc[index]
-                        # If the current row's start_time is after the
-                        # last_end_time plus the required wait time, select it.
-                        selected_observations.append(row)
-                        last_end_time = Time(row["end_time"])
-                    if len(selected_observations) >= self.requested_planet_observations:
-                        break
-                possible_observations = len(selected_observations)
-                data.append(
-                    {
-                        "system": system,
-                        "planet": planet,
-                        "max_observations": possible_observations,
-                    }
-                )
-
-        self.available_observations = pd.DataFrame(data)
 
         ################
 
@@ -276,21 +202,13 @@ class ImagingSchedule:
                     self.flatdf,
                     self.summary_stats,
                 ) = pdet.SS.sim_fixed_schedule(self.schedule)
-                self.flatdf = self.add_percentages(self.flatdf)
+                self.flatdf = self.add_percentages(self.flatdf, pdet)
 
                 self.summary_stats["Sun_ko"] = (
                     syst.get("koAngles_Sun").to(u.deg).value.tolist()
                 )
                 self.summary_stats["fitted_planets"] = sum(
                     [len(pdet.pops[key]) for key in pdet.pops.keys()]
-                )
-                # The number of planets that, if alone, could be observed
-                # the requested number of times
-                self.summary_stats["available_planets"] = len(
-                    self.available_observations.loc[
-                        self.available_observations["max_observations"]
-                        >= self.requested_planet_observations
-                    ]
                 )
                 with open(target_info_path, "wb") as f:
                     pickle.dump(self.targetdf, f)
@@ -451,12 +369,16 @@ class ImagingSchedule:
 
             logger.info("Creating optimization constraints")
             # model.AddNoOverlap(vars["all_intervals"])
-            model = self.same_star_observation_wait_constraint(model, vars, pdet)
-            model = self.overhead_time_constraint(model, vars)
+            model, vars = self.same_star_observation_wait_constraint(model, vars, pdet)
+            model, vars = self.overhead_time_constraint(model, vars)
 
             logger.info("Setting up objective function")
             model, vars = self.create_observation_booleans(model, vars)
-            model = self.create_objective_function(model, vars)
+            model, vars = self.create_objective_function(model, vars)
+
+            if self.schedule_hint is not None:
+                model = self.add_schedule_hints(model, vars, self.schedule_hint)
+
             logger.info("Running optimization solver")
             solver.Solve(model)
             final_df = self.process_result(vars, solver, pdet)
@@ -594,6 +516,7 @@ class ImagingSchedule:
         # creating an intermediary boolean that is true when they are both
         # active and adding a constraint that the intervals is above the user
         # defined distance between observations
+        vars["i_before_j_bools"] = {}
         for star in self.relevant_stars:
             star_var_list = vars[star]["vars"]
 
@@ -626,12 +549,14 @@ class ImagingSchedule:
 
             for i, i_var_set in enumerate(star_var_list[:-1]):
                 # Get stage_1_model variables
+                i_interval = i_var_set["interval"]
                 i_start = i_var_set["start"]
                 i_end = i_var_set["end"]
                 i_var_set["active"]
 
                 for j, j_var_set in enumerate(star_var_list[i + 1 :]):
                     # Get stage_1_model variables
+                    j_interval = j_var_set["interval"]
                     j_start = j_var_set["start"]
                     j_end = j_var_set["end"]
                     j_var_set["active"]
@@ -640,6 +565,7 @@ class ImagingSchedule:
                     i_before_j_bool = model.NewBoolVar(
                         f"{star} interval {i} starts before interval {j}"
                     )
+                    vars["i_before_j_bools"][(i_interval, j_interval)] = i_before_j_bool
                     model.Add(i_start < j_start).OnlyEnforceIf(i_before_j_bool)
                     model.Add(i_start > j_start).OnlyEnforceIf(i_before_j_bool.Not())
 
@@ -650,7 +576,7 @@ class ImagingSchedule:
                     model.Add(i_start - j_end >= blocks_between_star_obs).OnlyEnforceIf(
                         i_before_j_bool.Not()
                     )
-        return model
+        return model, vars
 
     def overhead_time_constraint(self, model, vars):
         # Constraint that makes sure that observations account for overhead time
@@ -658,6 +584,7 @@ class ImagingSchedule:
         # creating an intermediary boolean that is true when they are both
         # active and adding a constraint that the intervals is above the user
         # defined distance between observations
+        vars["int1_before_int2_bools"] = {}
         all_interval_dicts = []
         for star in self.relevant_stars:
             all_interval_dicts.extend(vars[star]["vars"])
@@ -681,6 +608,11 @@ class ImagingSchedule:
             int1_before_int2_bool = model.NewBoolVar(
                 f"{int1_interval} before {int2_interval}"
             )
+            vars["int1_before_int2_bools"][(int1_interval, int2_interval)] = (
+                int1_before_int2_bool,
+                int1_start,
+                int2_start,
+            )
             model.Add(int1_start < int2_start).OnlyEnforceIf(int1_before_int2_bool)
             model.Add(int1_start > int2_start).OnlyEnforceIf(
                 int1_before_int2_bool.Not()
@@ -693,7 +625,7 @@ class ImagingSchedule:
             model.Add(int1_start - int2_end >= self.ohblocks).OnlyEnforceIf(
                 int1_before_int2_bool.Not()
             )
-        return model
+        return model, vars
 
     def create_observation_booleans(self, model, vars):
         vars["obj_terms"] = []
@@ -750,7 +682,12 @@ class ImagingSchedule:
                         vars["obj_terms"].append(_bool * sum(coeffs[:, n_int, n_obs]))
                         for planet in self.star_planets[star]:
                             vars["planet_terms"][star][i][planet].append(
-                                (_bool, coeffs[planet, n_int, n_obs], n_obs)
+                                (
+                                    _bool,
+                                    coeffs[planet, n_int, n_obs],
+                                    n_obs,
+                                    n_times_blocks,
+                                )
                             )
                         prev_above_threshold = current_above_threshold
         return model, vars
@@ -760,6 +697,8 @@ class ImagingSchedule:
         # of benefit set by the requested_planet_observations parameter
         all_planet_requested_observations = []
         amounts_above_threshold_terms = []
+        all_planet_requested_observations_dict = {}
+        above_requested_observations_dict = {}
         for star in tqdm(self.relevant_stars, desc="Adding threshold constraint"):
             n_intervals = min(
                 self.max_observations_per_star,
@@ -769,14 +708,20 @@ class ImagingSchedule:
                 above_requested_observations = model.NewBoolVar(
                     f"{star}{planet} above requested observations"
                 )
+                above_requested_observations_dict[
+                    (star, planet)
+                ] = above_requested_observations
                 requested_observations = model.NewIntVar(
                     0,
                     self.requested_planet_observations,
                     f"{star}{planet} meets threshold",
                 )
+                all_planet_requested_observations_dict[
+                    (star, planet)
+                ] = requested_observations
                 above_threshold_val = []
                 for interval_n in range(n_intervals):
-                    for _bool, coeff, _ in vars["planet_terms"][star][interval_n][
+                    for _bool, coeff, *_ in vars["planet_terms"][star][interval_n][
                         planet
                     ]:
                         if coeff >= self.coeff_multiple * self.planet_threshold:
@@ -809,11 +754,111 @@ class ImagingSchedule:
                 * max(self.block_multiples)
                 * all_planet_requested_observations
             )
-            + sum(amounts_above_threshold_terms)
-            - sum(vars["size_vars"])
+            # + sum(amounts_above_threshold_terms)
+            # - sum(vars["size_vars"])
             - sum(vars["active_bools"])
             - sum(vars["end_vars"])
         )
+        vars[
+            "all_planet_requested_observations"
+        ] = all_planet_requested_observations_dict
+        vars["above_requested_observations"] = above_requested_observations_dict
+        return model, vars
+
+    def add_schedule_hints(self, model, vars, prev_schedule):
+        logger.info("Adding solver hints from previous schedule")
+        with open(prev_schedule, "rb") as f:
+            prev_final_df = pickle.load(f)
+        stars = prev_final_df["star"].unique()
+        interval_start_hints = {}
+        for star in stars:
+            star_df = prev_final_df[prev_final_df["star"] == star]
+            if star not in vars.keys():
+                continue
+            star_var_list = vars[star]["vars"]
+            # Need to vary the start domains so that the intervals are not overlapping
+            for i, var_set in enumerate(star_var_list):
+                if star_df.empty:
+                    continue
+                interval_var = var_set["interval"]
+                start_var = var_set["start"]
+                size_var = var_set["size"]
+                active_var = var_set["active"]
+                start_domain = var_set["start_domain"]
+                end_var = var_set["end"]
+
+                domain_times = self.obs_times_jd[start_domain]
+                obs_in_domain = [
+                    time for time in star_df["time_jd"] if time in domain_times
+                ]
+                if len(obs_in_domain) > 0:
+                    prev_obs = star_df[star_df["time_jd"] == obs_in_domain[0]]
+                    n_obs = np.argwhere(obs_in_domain[0] == self.obs_times_jd)[0][0]
+                    prev_obs = prev_obs.iloc[0]
+                    prev_start = self.block_inds[n_obs]
+                    prev_size = int(prev_obs["int_time_d"].item() / self.min_int_time)
+                    prev_end = prev_start + prev_size
+                    interval_start_hints[interval_var] = prev_start
+                    model.AddHint(start_var, prev_start)
+                    model.AddHint(size_var, prev_size)
+                    model.AddHint(end_var, prev_end)
+                    model.AddHint(active_var, 1)
+                    # Go through all the booleans and add hints
+                    for _bool, _, _n_obs, n_times_blocks in vars["planet_terms"][star][
+                        i
+                    ][0]:
+                        correct_bool = (_n_obs == n_obs) & (prev_size == n_times_blocks)
+                        model.AddHint(_bool, correct_bool)
+                    # Create the star_df to not have this observation
+                    star_df = star_df[star_df["time_jd"] != self.obs_times_jd[n_obs]]
+                    logger.debug(f"Added hint for observation {n_obs} for star {star}")
+                # This might be useful for some models but it functions well
+                # enough without it
+                # if not hints_added:
+                #     start_val = default_starts[i]
+                #     interval_start_hints[interval_var] = start_val
+                #     model.AddHint(active_var, 0)
+                #     model.AddHint(size_var, default_size)
+                #     model.AddHint(start_var, start_val)
+                #     model.AddHint(end_var, start_val + default_size)
+                #     for _bool, *_ in vars["planet_terms"][star][i][0]:
+                #         model.AddHint(_bool, 0)
+                #     logger.debug(
+                #         f"Added default hint for observation {n_obs} for star {star}"
+                #     )
+
+        for (star, planet), var in vars["all_planet_requested_observations"].items():
+            star_df = prev_final_df[prev_final_df["star"] == star]
+            # Use star_df['coeff0'], star_df['coeff1'], etc to set booleans for
+            # number of detections
+            meets_request = (
+                star_df[f"coeff{planet}"] >= self.coeff_multiple * self.planet_threshold
+            ).sum() >= self.requested_planet_observations
+            model.AddHint(var, meets_request)
+            # also set the above requested observations here
+            above_request = (
+                (
+                    star_df[f"coeff{planet}"]
+                    - (self.coeff_multiple * self.planet_threshold)
+                )
+                .sum()
+                .astype(int)
+            )
+            above_var = vars["above_requested_observations"][(star, planet)]
+            model.AddHint(above_var, above_request)
+        # Leaving these here for now, may be useful later
+        # for (inti, intj), var in vars["i_before_j_bools"].items():
+        #     previ_start = interval_start_hints[inti]
+        #     prevj_start = interval_start_hints[intj]
+        #     i_before_j = previ_start < prevj_start
+        #     model.AddHint(var, i_before_j)
+        # for (int1_interval, int2_interval), (_bool, int1_start, int2_start) in vars[
+        #     "int1_before_int2_bools"
+        # ].items():
+        #     prev1_start = interval_start_hints[int1_interval]
+        #     prev2_start = interval_start_hints[int2_interval]
+        #     int1_before_int2 = prev1_start < prev2_start
+        #     model.AddHint(_bool, int1_before_int2)
         return model
 
     def process_result(self, vars, solver, pdet):
@@ -938,22 +983,21 @@ class ImagingSchedule:
         final_df["WAs"] = WAs_lists
         return final_df
 
-    def add_percentages(self, flat_info):
+    def add_percentages(self, flat_info, pdet):
         """
         Add the percentage of planets that have been observed at least once,
         twice, and three times to the flat_info dataframe as a function of time.
         This also re-orders the flat_info dataframe by time.
         """
-        max_obs_per_planet = self.available_observations["max_observations"]
+        observable_planets = self.summary_stats["unique_planets_detected"]
+        twice_observable_planets = self.summary_stats["two_detections"]
+        thrice_observable_planets = self.summary_stats["three_plus_detections"]
 
-        observable_planets = sum(max_obs_per_planet > 0)
-        twice_observable_planets = sum(max_obs_per_planet > 1)
-        thrice_observable_planets = sum(max_obs_per_planet > 2)
         flat_info["time"] = Time(flat_info["obs_time"], format="jd").datetime
         flat_info = flat_info.sort_values("time").reset_index(drop=True)
         times = Time(flat_info["obs_time"], format="jd")
         flat_info["time_since_mission_start"] = (
-            times.decimalyear - self.start_time.decimalyear
+            times.decimalyear - pdet.SS.TimeKeeping.missionStart.decimalyear
         )
         one_percents = []
         two_percents = []
@@ -964,7 +1008,9 @@ class ImagingSchedule:
             two_counter = sum([1 for k, v in obs_counter.items() if v >= 2])
             three_counter = sum([1 for k, v in obs_counter.items() if v >= 3])
             one_percents.append(one_counter / observable_planets)
-            two_percents.append(two_counter / twice_observable_planets)
+            two_percents.append(
+                two_counter / (twice_observable_planets + thrice_observable_planets)
+            )
             three_percents.append(three_counter / thrice_observable_planets)
         flat_info["planets_detected_at_least_once"] = one_percents
         flat_info["planets_detected_at_least_twice"] = two_percents
