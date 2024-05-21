@@ -1043,7 +1043,7 @@ class PlanetPopulation:
             if not ko_included:
                 target_ko = np.ones(len(koT), dtype=bool)
 
-            self.prop_for_imaging(obs_times[0])
+            # self.prop_for_imaging(obs_times[0])
             # Calculating the WA and dMag values of all orbits at all times
             with Pool(processes=workers) as pool:
                 output = pool.map(self.WA_dMag_obj, obs_times)
@@ -1056,7 +1056,14 @@ class PlanetPopulation:
             dMagarr = np.array(all_dMags)
 
             fZ_interp = interp1d(koT.jd, ZL.fZMap[mode["systName"]][target_sInd])
-            fZs = fZ_interp(obs_times.jd)
+            # WARNING: This should probably raise an error instead of clipping
+            # the values.
+            # For now I think this only gets this far when the "length" of the
+            # schedule and the mission length are the same, but account for
+            # leap years differently
+            obs_times_jd = obs_times.jd
+            obs_times_jd[obs_times_jd > koT.jd[-1]] = koT.jd[-1]
+            fZs = fZ_interp(obs_times_jd)
             fZ_interp_keys = np.array([x for x in dim_dMag_interps.keys()])
             fZ_time_keys = np.zeros(len(fZs))
             for i, fZ in enumerate(fZs):
